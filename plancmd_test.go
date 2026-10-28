@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io"
@@ -278,31 +280,59 @@ func TestPlanCommand_NewErrorIsShownAndStartsNoJob(t *testing.T) {
 	}
 }
 
-// TestPlanCommand_NoOrchestratorPath checks that the /plan path cannot take a
-// worker slot: plancmd.go does not import the orchestrator. The worker limit
-// is a counter of the orchestrator, so a path without it cannot change it.
-func TestPlanCommand_NoOrchestratorPath(t *testing.T) {
+// TestPlanCommand_TakesNoWorkerSlot checks that /plan never starts or changes a
+// workflow run. A worker slot is counted by flow.Manager (its active runs and
+// the paused runs the orchestrator holds), so only a workflow run takes one.
+// The slot fixtures of internal/flow are not exported to package main, so the
+// test reads the source: plancmd.go may call no workflowManager method except
+// Info, and it may use no flow identifier except RepoInfo.
+func TestPlanCommand_TakesNoWorkerSlot(t *testing.T) {
 	_, self, _, _ := runtime.Caller(0)
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, filepath.Join(filepath.Dir(self), "plancmd.go"), nil, parser.ImportsOnly)
+	file, err := parser.ParseFile(fset, filepath.Join(filepath.Dir(self), "plancmd.go"), nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, imp := range file.Imports {
-		if strings.Contains(imp.Path.Value, "orchestrator") {
-			t.Fatalf("plancmd.go imports %s", imp.Path.Value)
+	ast.Inspect(file, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
 		}
-	}
+		x, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		switch {
+		case x.Name == "workflowManager" && sel.Sel.Name != "Info":
+			t.Errorf("%s: plancmd.go uses workflowManager.%s", fset.Position(sel.Pos()), sel.Sel.Name)
+		case x.Name == "flow" && sel.Sel.Name != "RepoInfo":
+			t.Errorf("%s: plancmd.go uses flow.%s", fset.Position(sel.Pos()), sel.Sel.Name)
+		}
+		return true
+	})
 }
 
 // commitIn adds a file with a commit in dir, so the worktree counts as changed.
 func commitIn(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("plan"), 0o644); err != nil {
+	if err := commitInErr(dir); err != nil {
 		t.Fatal(err)
 	}
-	planGit(t, dir, "add", "plan.md")
-	planGit(t, dir, "commit", "-qm", "plan")
+}
+
+// commitInErr is commitIn for a goroutine, which must not call t.Fatal.
+func commitInErr(dir string) error {
+	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("plan"), 0o644); err != nil {
+		return err
+	}
+	for _, args := range [][]string{{"add", "plan.md"}, {"commit", "-qm", "plan"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git %v: %v: %s", args, err, out)
+		}
+	}
+	return nil
 }
 
 // openPlannerSession opens a real planner session in work and keeps it under
@@ -345,6 +375,50 @@ func TestClosePlannerSessions_CleanRemovedKeptHasNotice(t *testing.T) {
 	}
 	if n := len(plannerSessions); n != 0 {
 		t.Fatalf("open planner sessions after exit = %d, want 0", n)
+	}
+}
+
+func TestClosePlannerSessions_CancelsAndWaitsForResumedTurn(t *testing.T) {
+	_, work := newPlanRepo(t)
+	withTestWiring(t)
+	resetPlannerSessions(t)
+
+	s := openPlannerSession(t, work, "planner-job")
+	stopped := make(chan struct{})
+	var writeErr error
+	// A resumed turn that runs until it is cancelled, then writes once more.
+	// The write must land before Close decides whether the worktree is kept.
+	job := JobRegistry.Start(context.Background(), "resumed turn", jobs.KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
+		defer close(stopped)
+		<-ctx.Done()
+		writeErr = commitInErr(s.Worktree)
+		return "", false, ctx.Err()
+	})
+	resumableMu.Lock()
+	resumable[job.ID] = resumableEntry{chain: []string{"planner-job", job.ID}}
+	resumableMu.Unlock()
+	t.Cleanup(func() {
+		resumableMu.Lock()
+		delete(resumable, job.ID)
+		resumableMu.Unlock()
+	})
+
+	var out bytes.Buffer
+	closePlannerSessions(&out)
+
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("the resumed turn was not stopped before Close")
+	}
+	if writeErr != nil {
+		t.Fatalf("write of the resumed turn: %v", writeErr)
+	}
+	if _, err := os.Stat(s.Worktree); err != nil {
+		t.Fatalf("worktree removed under the resumed turn: %v", err)
+	}
+	if !strings.Contains(out.String(), "planner session planner-job kept") {
+		t.Fatalf("output = %q, want the kept notice", out.String())
 	}
 }
 

@@ -63,17 +63,32 @@ func registerPlannerSession(jobID string, e plannerEntry) {
 // plannerEntryOf returns the open planner session of jobID or of a job in its
 // conversation chain, so a resumed planner gets the worktree of its session.
 func plannerEntryOf(jobID string) (plannerEntry, bool) {
-	resumableMu.Lock()
-	ids := chainIDs(jobID, resumable[jobID])
-	resumableMu.Unlock()
+	ids := chainOf(jobID)
 	plannerSessionsMu.Lock()
 	defer plannerSessionsMu.Unlock()
+	root, ok := ownerOf(ids, plannerSessions)
+	if !ok {
+		return plannerEntry{}, false
+	}
+	return plannerSessions[root], true
+}
+
+// chainOf returns the job ids of the conversation chain of jobID.
+func chainOf(jobID string) []string {
+	resumableMu.Lock()
+	defer resumableMu.Unlock()
+	return chainIDs(jobID, resumable[jobID])
+}
+
+// ownerOf returns the key of open that is one of ids: the planner job that
+// started the session of a chain.
+func ownerOf(ids []string, open map[string]plannerEntry) (string, bool) {
 	for _, id := range ids {
-		if e, ok := plannerSessions[id]; ok {
-			return e, true
+		if _, ok := open[id]; ok {
+			return id, true
 		}
 	}
-	return plannerEntry{}, false
+	return "", false
 }
 
 // handlePlanCommand implements "/plan [topic]". A planner is not a run, so
@@ -141,15 +156,25 @@ func startPlanner(ctx context.Context, topic string) error {
 }
 
 // closePlannerSessions ends every open planner session. It runs when tyci
-// exits. A planner job that still runs is cancelled first, and its session is
-// closed after it stops or after planCloseWait. A clean worktree is removed.
-// A kept worktree gets a notice with its path on w. A close error is printed
-// on w too.
+// exits. Before a session is closed, every live job of its conversation chain
+// is cancelled and waited for, so a resumed turn that still writes stops
+// first. A clean worktree is removed. A kept worktree gets a notice with its
+// path on w. A close error is printed on w too.
 func closePlannerSessions(w io.Writer) {
 	plannerSessionsMu.Lock()
 	open := plannerSessions
 	plannerSessions = map[string]plannerEntry{}
 	plannerSessionsMu.Unlock()
+
+	live := map[string][]string{} // planner job id -> live jobs of its chain
+	for _, job := range JobRegistry.List() {
+		if !JobRegistry.IsLive(job.ID) {
+			continue
+		}
+		if root, ok := ownerOf(chainOf(job.ID), open); ok {
+			live[root] = append(live[root], job.ID)
+		}
+	}
 
 	ids := make([]string, 0, len(open))
 	for id := range open {
@@ -157,9 +182,11 @@ func closePlannerSessions(w io.Writer) {
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		if JobRegistry.IsLive(id) {
-			JobRegistry.Cancel(id)
-			JobRegistry.Wait(context.Background(), id, planCloseWait)
+		for _, jobID := range live[id] {
+			JobRegistry.Cancel(jobID)
+		}
+		for _, jobID := range live[id] {
+			JobRegistry.Wait(context.Background(), jobID, planCloseWait)
 		}
 		e := open[id]
 		kept, err := e.session.Close()
