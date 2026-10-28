@@ -165,6 +165,12 @@ func WithPolicy(ctx context.Context, p Policy) context.Context {
 	})
 }
 
+// PolicyOf returns the policy that WithPolicy stored in ctx, if any.
+func PolicyOf(ctx context.Context) (Policy, bool) {
+	p, ok := ctx.Value(policyCtxKey{}).(Policy)
+	return p, ok
+}
+
 // checkWriteRoot refuses a write or edit path outside the worktree of the
 // policy. It applies only with worktree-write. Symlinks are resolved first.
 func checkWriteRoot(ctx context.Context, path string) error {

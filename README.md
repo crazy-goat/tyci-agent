@@ -183,7 +183,18 @@ Type `/<name>` and the params in the chat to start a workflow. For example, `/is
 - A workflow that does not load is listed with the reason. Its row cannot be taken into the input.
 - If a required param is missing, the run does not start. The model asks you for the value. Then the model starts the run.
 - `/workflow <name> [params]` always starts a workflow. Use it for a workflow whose name is a builtin command.
-- The builtin commands are `btw`, `compact`, `exit`, `msg`, `new`, `resume` and `workflow`. A workflow with one of these names is an error. tyci shows the error at start-up and in the list. Start that workflow with `/workflow <name>`.
+- The builtin commands are `btw`, `compact`, `exit`, `msg`, `new`, `plan`, `resume` and `workflow`. A workflow with one of these names is an error. tyci shows the error at start-up and in the list. Start that workflow with `/workflow <name>`.
+
+### Plan with a planner
+
+Type `/plan [topic]` in the chat to start a planner. The topic is the first message to the planner. Without a topic, the planner asks you what to plan. Each `/plan` starts one new planner. Several planners can run at the same time.
+
+- A planner works in its own git worktree under `~/.tyci/worktrees/`. It does not change your checkout.
+- A planner does not take a worker slot of the orchestrator.
+- A notice shows the job id and the worktree of the planner when it starts.
+- The planner stays open until tyci exits. You can resume it after its answer, in the agent view or with the chat tool `resume`. Each resumed turn works in the planner worktree, under the planner policy.
+- When tyci exits, a turn that still runs is stopped first. Then the worktree of a planner with no change is removed.
+- When tyci exits, the worktree of a planner that changed a file is kept, with its branch `plan-<id>`. A notice on the terminal shows the path.
 
 ### Workflow proposals
 

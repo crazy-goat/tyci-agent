@@ -53,6 +53,7 @@ var builtinCommands = []struct{ name, desc string }{
 	{"exit", "quit"},
 	{"msg", "send a message to a background job"},
 	{"new", "start a new conversation"},
+	{"plan", "start a planner session"},
 	{"reload", "reload hooks, Lua tools, cron and MCP"},
 	{"resume", "resume a session"},
 	{"stop", "stop a workflow run"},

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Chat: `/plan [topic]` starts a planner job in its own worktree, with the builtin `planner` role. The job runs beside the other jobs and takes no worker slot. The planner stays open until tyci exits, and can be resumed in its worktree, from the agent view or the chat tool `resume`. At exit a turn that still runs is stopped first, then a clean worktree is removed, and a kept one is shown on the terminal (#799).
 - Flow: `planner` is a builtin role with the permission `worktree-write` and network on. Its prompt tells it to read the code and the open issues, search for duplicates, create an issue only after the user says "create it", never set a milestone or the `accepted` label, and write files only in its own worktree (#798).
 - Lua tools: the `tool_create` tool lets the main chat, and a workflow role whose `tools` list names it, create a Lua tool in the run or session folder. The tool lasts until that run or session ends (#213).
 - Lua tools: the `tool_promote` tool copies a Lua tool made in this run or session to `.tyci/tools/<name>.lua` of the worktree, only when a read-only safety review answers `SAFE`. Otherwise nothing is copied and the chat asks the user. The copy is not committed (#213).
@@ -16,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Workflows: the `issue-to-merge` workflow pauses at the new state `ask_protected` when the pull request changes protected paths (`.github/`, `.tyci/`, `internal/flow/checks/`). A human answers `approve` to merge the pull request through the run, or `stop` to end the run. The oracle never answers this pause, and it cannot send the run to the approved merge (#753).
 
 ### Changed
+- Chat: `plan` is a reserved workflow name, like the other builtin commands. A workflow named `plan` cannot start with `/plan` (#799).
 - Workflows: the title of a run's pull request is the subject of the first non-merge commit since the default branch. A sync merge as the last commit no longer becomes the title (#753).
 - Workflows: the review prompt tells the reviewer to check the coder's claims against the code, to check the issue numbers that a diff cites, and to drop findings without a file and line. A review round reads the earlier review reports and looks first at the new commits. The worker fixes every hit of a pattern that a review lists (#753).
 

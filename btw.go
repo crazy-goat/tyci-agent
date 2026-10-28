@@ -249,14 +249,27 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 	// new job appends can ever alias or mutate the stored transcript.
 	forked := forkMessagesForBtw(entry.msgs, task)
 
+	// A planner turn runs in the worktree of its session, under the planner
+	// policy. Every caller gets this here: the agent view and the resume tool.
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	owner, root, owned := plannerOwnerOf(jobID)
+	if owned {
+		ctx = tools.WithPolicy(tools.WithWorkdir(ctx, owner.session.Worktree), owner.policy)
+		if parentID == "" {
+			parentID = root
+		}
+	}
+
 	// Detach from the tool call's context so the resumed job keeps running after
 	// Resume returns. The registry still owns cancellation for kill_job; there
 	// is deliberately no subagent-specific deadline.
 	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
-	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 	job := a.reg.Start(jobCtx, task, jobs.KindSubagent, parentID, func(runCtx context.Context, newJobID string) (string, bool, error) {
 		defer cancel()
+		if owned {
+			defer unregisterPlannerTurn(newJobID)
+		}
 		// newJobID is also this resumed conversation's todo-agent id (see
 		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —
 		// mark it done so its list becomes eligible for eviction once the
@@ -357,6 +370,13 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 
 		return text, truncated, err
 	})
+	if owned {
+		// Registered after Start, so a turn that ended at once is not kept.
+		registerPlannerTurn(job.ID, root)
+		if !a.reg.IsLive(job.ID) {
+			unregisterPlannerTurn(job.ID)
+		}
+	}
 
 	return jobHandleAdapter{job}, nil
 }
