@@ -807,6 +807,8 @@ Each flow role also takes these keys in the flow config:
    tries them in order when the model fails. Default: `[]` (no fallback).
 2. `roles.<name>.permission`: `read-only`, `worktree-write` or `full`. Default:
    `worktree-write`. `read-only` refuses `write`, `edit`, `bash` and `kill_job`.
+   It also refuses every MCP tool. A `read-only` role does not see MCP tools in its
+   schema, even when `tools` names them.
    `worktree-write` refuses writes outside the worktree. `full` has no such limit.
 3. `roles.<name>.network`: `true` or `false`. Default: `true`. `false` removes
    the `web` tool and the MCP tools that are not listed in `tools`.

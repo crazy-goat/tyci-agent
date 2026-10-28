@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -63,12 +64,93 @@ func TestMCPNeedsListing(t *testing.T) {
 	if AllowedFor(ro, "mcp_x_y") {
 		t.Fatal("unlisted MCP tool allowed under read-only")
 	}
-	listed := Policy{Permission: PermissionReadOnly, Network: true, Tools: []string{"read", "mcp_x_y"}}
+	listed := Policy{Permission: PermissionWorktreeWrite, Network: true, Tools: []string{"read", "mcp_x_y"}}
 	if !AllowedFor(listed, "mcp_x_y") {
 		t.Fatal("MCP tool listed by name refused")
 	}
 	if AllowedFor(listed, "mcp_q_y") {
 		t.Fatal("unlisted MCP tool allowed")
+	}
+}
+
+// TestReadOnlyRefusesListedMCPTool: a read-only role cannot call an MCP tool,
+// even when its tools list names it, directly or through lua tool().
+func TestReadOnlyRefusesListedMCPTool(t *testing.T) {
+	for _, list := range [][]string{{"read", "mcp_weather_forecast"}, {"read", "mcp_weather_*"}} {
+		client := &recordingMCPClient{fakeMCPClient: fakeMCPClient{name: "weather"}}
+		r := newTestRunnerWithTool("weather", "forecast")
+		r.clients["weather"] = client
+		withRunner(t, r)
+		ctx := WithPolicy(context.Background(), Policy{Role: "review", Permission: PermissionReadOnly, Network: true, Tools: list, Dir: t.TempDir()})
+
+		res := RunTool(ctx, "mcp_weather_forecast", map[string]any{})
+		if res.Success || !strings.Contains(res.Error, `is not allowed for role "review"`) {
+			t.Fatalf("tools %v: direct call result = %+v", list, res)
+		}
+
+		res = (&LuaEvalTool{}).Run(ctx, map[string]any{
+			"script": `local r = tool("mcp_weather_forecast", {}); return r.success and "ran" or r.error`,
+		})
+		if !res.Success || !strings.Contains(res.Content, `is not allowed for role "review"`) {
+			t.Fatalf("tools %v: lua call result = %+v", list, res)
+		}
+		if client.calls > 0 {
+			t.Fatalf("tools %v: the MCP server was called", list)
+		}
+	}
+}
+
+// TestReadOnlyOffersNoMCPTool: the schema of a read-only role has no MCP tool.
+func TestReadOnlyOffersNoMCPTool(t *testing.T) {
+	withRunner(t, newTestRunnerWithTool("weather", "forecast"))
+	for _, list := range [][]string{nil, {"read", "mcp_weather_forecast"}, {"mcp_weather_*"}} {
+		p := Policy{Role: "review", Permission: PermissionReadOnly, Network: true, Tools: list}
+		names := p.ToolNames()
+		if slices.Contains(names, "mcp_weather_forecast") {
+			t.Fatalf("tools %v: ToolNames offers the MCP tool: %v", list, names)
+		}
+		var schema []map[string]any
+		if err := json.Unmarshal(GetSubagentToolsSchemaJSONFor(names), &schema); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if schemaHasTool(t, schema, "mcp_weather_forecast") {
+			t.Fatalf("tools %v: the schema offers the MCP tool", list)
+		}
+	}
+}
+
+// TestUnsetOrReadOnlyModeRefusesListedMCPTool: an unset mode reads as read-only
+// in modeAllows, so it gets no MCP tool either.
+func TestUnsetOrReadOnlyModeRefusesListedMCPTool(t *testing.T) {
+	for _, perm := range []string{"", PermissionReadOnly} {
+		p := Policy{Permission: perm, Network: true, Tools: []string{"mcp_x_y"}}
+		if AllowedFor(p, "mcp_x_y") {
+			t.Fatalf("permission %q: listed MCP tool allowed", perm)
+		}
+	}
+}
+
+// TestReadOnlyLuaCannotWriteOrRunBash: a listed write or bash cannot widen a
+// read-only mode, and a lua script reaches the same gate.
+func TestReadOnlyLuaCannotWriteOrRunBash(t *testing.T) {
+	dir := t.TempDir()
+	ctx := WithWorkdir(WithPolicy(context.Background(), Policy{Role: "review", Permission: PermissionReadOnly, Network: true, Tools: []string{"read", "write", "bash"}, Dir: dir}), dir)
+	res := (&LuaEvalTool{}).Run(ctx, map[string]any{
+		"script": `
+			local w = tool("write", {path = "x.txt", content = "x"})
+			local b = tool("bash", {command = "touch y.txt"})
+			return (w.success and "write ran" or w.error) .. "\n" .. (b.success and "bash ran" or b.error)`,
+	})
+	if !res.Success {
+		t.Fatalf("script failed: %s", res.Error)
+	}
+	if strings.Count(res.Content, `is not allowed for role "review" (permission read-only)`) != 2 {
+		t.Fatalf("write or bash was not refused: %q", res.Content)
+	}
+	for _, name := range []string{"x.txt", "y.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			t.Fatalf("%s was created", name)
+		}
 	}
 }
 
