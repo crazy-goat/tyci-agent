@@ -363,21 +363,30 @@ func TestIssueToMerge_PlanGate(t *testing.T) {
 	if r.oracleMayAnswer(&RunState{Ask: &Ask{Message: "m"}}, ap) {
 		t.Error("the oracle may answer ask_plan")
 	}
-	// Walk the routes of the plan gate. Only the plan states are expanded: open_pr is
-	// the normal path after an approval, so its routes are not part of the gate.
+	// Walk the routes of the risky issue from open_pr_risky. An approval edge (APPROVE at
+	// plan_review, approve at ask_plan) is the only way to the code step. Every other
+	// route stays in the gate: the walk fails when it reaches fixer, oracle, ask or code.
+	gate := map[string]bool{"open_pr_risky": true, "plan": true, "plan_review": true, "ask_plan": true}
 	seen := map[string]bool{}
-	queue := []string{"plan", "plan_review"}
+	queue := []string{"open_pr_risky"}
 	for len(queue) > 0 {
 		name := queue[0]
 		queue = queue[1:]
-		if name == "ask" {
-			t.Fatal("the plan gate reaches the generic ask state")
-		}
-		if seen[name] || (name != "plan" && name != "plan_review" && name != "ask_plan") {
+		if seen[name] {
 			continue
 		}
 		seen[name] = true
-		for _, next := range wf.States[name].On {
+		switch name {
+		case "fixer", "oracle", "ask", "code":
+			t.Fatalf("the plan gate reaches %q before APPROVE or a human answer", name)
+		}
+		if !gate[name] {
+			continue
+		}
+		for key, next := range wf.States[name].On {
+			if key == "APPROVE" || (name == "ask_plan" && key == "approve") {
+				continue
+			}
 			queue = append(queue, next)
 		}
 	}

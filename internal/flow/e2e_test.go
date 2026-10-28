@@ -966,3 +966,21 @@ func TestE2E_RiskyIssue_ExistingPRSkipsGate(t *testing.T) {
 		t.Errorf("plan visits %d, code visits %d", e.st.Visits["plan"], e.st.Visits["code"])
 	}
 }
+
+// #214: open_pr.sh fails for a risky issue. The run pauses at ask_plan and no code step runs.
+func TestE2E_RiskyIssue_OpenPRFailAsksPlan(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	// The PR is listed, but its branch is not on origin, so 'git fetch' fails and the key is fail.
+	e.ctlSet("pr", "")
+	e.mustPause()
+	e.wantStates("check_done, open_pr_risky")
+	if e.st.Current != "ask_plan" || e.st.Ask == nil {
+		t.Errorf("current %q, ask = %+v", e.st.Current, e.st.Ask)
+	}
+	if e.st.Visits["code"] != 0 || e.st.Visits["plan"] != 0 {
+		t.Errorf("code visits %d, plan visits %d", e.st.Visits["code"], e.st.Visits["plan"])
+	}
+	e.wantNoAsk()
+	e.wantNoMerge()
+}
