@@ -92,6 +92,49 @@ func TestWorkerTask_RunSoFarOnSecondVisit(t *testing.T) {
 	}
 }
 
+// #445: the retried worker gets the error of its own failed step. That step is
+// the last visit of the worker, so runSoFar must keep it in the list.
+func TestWorkerTask_RetryGetsErrorOfFailedStep(t *testing.T) {
+	run := t.TempDir()
+	st := &RunState{Version: 1, Current: "code", Status: "running", Issue: 7, Visits: map[string]int{"code": 1}, History: []Step{
+		{Seq: 1, State: "code", Kind: "agent", Key: "error", To: "ask", Role: "worker", Error: "agent failed in state \"code\": no artifact from worker"},
+		{Seq: 2, State: "ask", Kind: "ask", Key: "retry", To: "code"},
+	}}
+	art := filepath.Join(run, "artifacts", "003-code")
+	if err := os.MkdirAll(art, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := &reportSpawn{}
+	rc := RunContext{Worktree: t.TempDir(), ArtifactDir: art, RunSoFar: runSoFar(st, "code", run)}
+	if _, _, err := reportRunner(s).Text(context.Background(), "worker", "", rc); err != nil {
+		t.Fatal(err)
+	}
+	task := s.specs[0].Task
+	for _, want := range []string{
+		"- 001 code: error\n  error: agent failed in state \"code\": no artifact from worker\n",
+		"- 002 ask: retry",
+	} {
+		if !strings.Contains(task, want) {
+			t.Errorf("task lacks %q:\n%s", want, task)
+		}
+	}
+}
+
+// #445: a long error is cut to runSoFarErrorCap bytes with a marker.
+func TestRunSoFar_ErrorIsCapped(t *testing.T) {
+	st := &RunState{History: []Step{
+		{Seq: 1, State: "code", Kind: "agent", Key: "error", To: "ask", Error: strings.Repeat("e", 5000)},
+		{Seq: 2, State: "ask", Kind: "ask", Key: "retry", To: "code"},
+	}}
+	got := runSoFar(st, "code", "")
+	if want := strings.Repeat("e", runSoFarErrorCap) + "…"; !strings.Contains(got, want) {
+		t.Errorf("capped error lacks %d bytes and the marker:\n%.200s", runSoFarErrorCap, got)
+	}
+	if strings.Contains(got, strings.Repeat("e", runSoFarErrorCap+1)) {
+		t.Errorf("error is not capped at %d bytes", runSoFarErrorCap)
+	}
+}
+
 func TestSubagentRunner_ReminderInSameSession(t *testing.T) {
 	art := t.TempDir()
 	s := &reportSpawn{write: func(sp tools.TaskSpec) bool { return sp.Resume != "" }}
