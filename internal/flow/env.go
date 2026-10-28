@@ -22,7 +22,7 @@ var paramEnvName = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 // st.Visits[current] (the caller increments before running).
 // st.PR == 0 yields an empty TYCI_PR. The runner appends TYCI_ARTIFACT_DIR,
 // the artifact dir of the step, and TYCI_REVIEW_DIR (see reviewDir), both
-// empty when the runner has no run dir.
+// empty when the runner has no run dir. The runner also appends TYCI_ANSWER (see savedAnswer).
 // TYCI_DEFAULT_BRANCH is the defaultBranch argument (Runner.DefaultBranch).
 // Each bound param adds TYCI_PARAM_<NAME> (upper case) when its name matches
 // [A-Za-z0-9_]+; other names are skipped.
@@ -102,6 +102,20 @@ func (r *Runner) reviewDir(st *RunState) string {
 		h := st.History[i]
 		if h.Role == "review" && h.Task == "" && h.Artifact != "" {
 			return filepath.Join(r.RunDir, "artifacts", h.Artifact)
+		}
+	}
+	return ""
+}
+
+// savedAnswer returns the output.txt of the newest oracle step whose state saves its
+// answer (see savesAnswer), or "" when the run has none. A check reads it as
+// TYCI_ANSWER, so a renamed state still works (#784). The file may be missing when
+// that oracle step wrote none.
+func (r *Runner) savedAnswer(st *RunState) string {
+	for i := len(st.History) - 1; i >= 0; i-- {
+		h := st.History[i]
+		if h.Kind == "agent" && h.Role == "oracle" && h.Artifact != "" && savesAnswer(r.WF, h.State) {
+			return filepath.Join(r.RunDir, "artifacts", h.Artifact, "output.txt")
 		}
 	}
 	return ""

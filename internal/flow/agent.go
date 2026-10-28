@@ -65,7 +65,7 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 		// The answer is the text. The oracle does not write report.md.
 		return strings.TrimSpace(out), session, nil
 	}
-	if isSavedOracle(role, task) {
+	if role == "oracle" && rc.Saves {
 		// The answer is the text. It is saved as output.txt for the next state.
 		if rc.ArtifactDir != "" {
 			if err := os.WriteFile(filepath.Join(rc.ArtifactDir, "output.txt"), []byte(strings.TrimSpace(out)+"\n"), 0o600); err != nil {
@@ -150,7 +150,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 			text += "Steps since your last visit, with their artifact files (read them with the read tool):\n\n" + rc.RunSoFar + "\n"
 		}
 		text += "Your artifact dir: " + rc.ArtifactDir + "\n"
-		if !isPauseOracle(role, task) && !isSavedOracle(role, task) && !isPlanReview(role, task) {
+		if !isPauseOracle(role, task) && (role != "oracle" || !rc.Saves) && !isPlanReview(role, task) {
 			text += "Before you end, you MUST write " + reportPath(rc) + ": what you did, the result, what is left.\n"
 		}
 	}

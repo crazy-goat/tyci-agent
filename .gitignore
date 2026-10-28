@@ -16,6 +16,10 @@ vendor/
 
 # Claude Code working directories (its own git worktrees live in here)
 .claude/
+
+# Project notes written by the memory tool. The rest of .tyci/ (ejected
+# workflows) is meant to be committed.
+/.tyci/memory/
 /findings.md
 /review.md
 /.env.worktree
