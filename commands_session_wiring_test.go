@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -68,5 +67,4 @@ func TestInitCommon_SessionFolderWiring(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("the session folder survived shutdown: %v", err)
 	}
-	_ = context.Background
 }
