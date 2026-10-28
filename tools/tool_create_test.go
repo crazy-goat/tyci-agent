@@ -266,7 +266,7 @@ func subagentCtx(dir string, allowed []string, policy *Policy) context.Context {
 	if policy != nil {
 		ctx = WithPolicy(ctx, *policy)
 	}
-	return WithToolGate(ctx, SubagentToolCreateGate(ctx, allowed))
+	return WithToolGate(ctx, SubagentRoleToolGate(ctx, allowed))
 }
 
 func TestToolCreateRefusedForUnrestrictedSubagent(t *testing.T) {

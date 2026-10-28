@@ -14,9 +14,9 @@ import (
 
 // ToolPromoteTool implements "tool_promote": it copies a Lua tool made by
 // tool_create into the project, at .tyci/tools/<name>.lua of the current
-// worktree. A read-only oracle reviews the script first. Only a SAFE answer
-// copies the file. Any other answer copies nothing, and the model asks the
-// user. The tool never commits, pushes or merges.
+// worktree. A read-only oracle reviews the script first. Only an answer of
+// exactly SAFE copies the file. Any other answer copies nothing, and the
+// model asks the user. The tool never commits, pushes or merges.
 type ToolPromoteTool struct{}
 
 // toolPromoteName is the name of the tool. The role gate refers to it (see
@@ -52,7 +52,7 @@ func (t *ToolPromoteTool) Name() string { return toolPromoteName }
 
 func (t *ToolPromoteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	name := strings.TrimSpace(stringParam(input, "name", ""))
-	if !toolCreateNameRE.MatchString(name) || strings.HasPrefix(name, "mcp_") {
+	if !validToolName(name) {
 		return validationf("name %q is not valid; use 1-64 lowercase letters, digits and underscores, starting with a letter, and not starting with mcp_", name)
 	}
 	dir := RunDirFrom(ctx)
@@ -94,9 +94,9 @@ func (t *ToolPromoteTool) Run(ctx context.Context, input map[string]any) ToolRes
 }
 
 // promoteRoot returns the top level of the worktree that the call works in.
-// It refuses a directory that is not a linked git worktree, and the main
-// checkout. The main checkout has a .git directory; a linked worktree has a
-// .git file.
+// It refuses a directory that is not in a git work tree, and the main
+// checkout. The main checkout has a .git directory; a linked worktree and a
+// submodule have a .git file, and both are accepted.
 func promoteRoot(ctx context.Context) (string, error) {
 	dir := Workdir(ctx)
 	if dir == "" {
@@ -121,8 +121,8 @@ func promoteRoot(ctx context.Context) (string, error) {
 }
 
 // promoteRefusal returns the reason to keep the tool out of the project, or
-// "" when the review answered SAFE. The first line of the answer, trimmed,
-// must be exactly SAFE.
+// "" when the review answered SAFE. The whole answer, trimmed, must be
+// exactly SAFE. Any other text, also text after SAFE, is a refusal.
 func promoteRefusal(answer string, err error) string {
 	if err != nil {
 		return "the oracle failed: " + err.Error()
@@ -131,8 +131,7 @@ func promoteRefusal(answer string, err error) string {
 	if text == "" {
 		return "the oracle gave no answer"
 	}
-	first, _, _ := strings.Cut(text, "\n")
-	if strings.TrimSpace(first) == "SAFE" {
+	if text == "SAFE" {
 		return ""
 	}
 	// One line, so the refusal reads well in the chat.
@@ -143,13 +142,13 @@ func promoteRefusal(answer string, err error) string {
 	return "the oracle did not answer SAFE: " + text
 }
 
-// notPromoted is the result for a refusal of the review. The model reads the
-// text and asks the user in the chat.
+// notPromoted is the result for a refusal of the review. It is a failure, so
+// the model sees it as an error. The text says what to do: ask the user.
 func notPromoted(reason string) ToolResult {
 	return ToolResult{
 		Type:    "result",
-		Success: true,
-		Content: "not promoted: " + reason + "; ask the user",
+		Success: false,
+		Error:   "not promoted: " + reason + "; ask the user",
 	}
 }
 

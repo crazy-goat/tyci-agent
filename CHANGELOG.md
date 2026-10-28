@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Lua tools: `tool_promote` copies a tool only when the safety review answers exactly `SAFE`. An answer that has more text, also one that starts with `SAFE`, is refused (#815).
+- Internal: `SubagentToolCreateGate` is renamed `SubagentRoleToolGate`. It checks the role-gated tools `tool_create` and `tool_promote` (#815).
 - Docs: the README says that the planner rules for issues live only in its prompt, and that its `bash` tool is not sandboxed (#808).
 
 ### Deprecated
@@ -16,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
 
 ### Fixed
+- Lua tools: a refused `tool_promote` call returns a failure, not a success. The error gives the reason and says to ask the user (#815).
 - Workflows: an unknown result of the `issue-to-merge` gate `check_done` no longer goes to the fixer. The run pauses at the new state `ask_check`, which the oracle never answers. A human answers `retry` to run the gate again, or `stop` to end the run. A copied workflow does not get the fix. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again (#810).
 - Lua tools: a paused run that starts again, also after a tyci restart, loads the tool files of its run folder again. A bad file is logged and skipped, and the run starts (#813).
 - Lua tools: at start, tyci removes the session folders `tyci-session-*` of tyci processes that have exited. A folder without a PID, made by an older tyci, is removed after 24 hours (#813).

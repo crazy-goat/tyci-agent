@@ -87,7 +87,7 @@ func TestToolPromoteSafeCopiesToWorktree(t *testing.T) {
 	if res := createInRun(t, dir, "made_echo", createSource); !res.Success {
 		t.Fatalf("tool_create failed: %s", res.Error)
 	}
-	oracle := useFakeOracle(t, "  SAFE \r\nthe tool only echoes its input", nil)
+	oracle := useFakeOracle(t, "  SAFE \r\n", nil)
 
 	res := RunTool(promoteCtx(dir, wt), "tool_promote", promoteInput("made_echo"))
 	if !res.Success {
@@ -121,6 +121,9 @@ func TestToolPromoteRefusesWithoutSafe(t *testing.T) {
 		{name: "doubt", answer: "DOUBT\nit reads a file", reason: "the oracle did not answer SAFE: DOUBT it reads a file"},
 		{name: "unsafe", answer: "UNSAFE\nit calls the network", reason: "the oracle did not answer SAFE: UNSAFE it calls the network"},
 		{name: "malformed", answer: "Safe, I think", reason: "the oracle did not answer SAFE: Safe, I think"},
+		{name: "safe with a reason", answer: "SAFE\nbut UNSAFE because it reads a file", reason: "the oracle did not answer SAFE: SAFE but UNSAFE because it reads a file"},
+		{name: "safe with a period", answer: "SAFE.", reason: "the oracle did not answer SAFE: SAFE."},
+		{name: "lower case", answer: "safe", reason: "the oracle did not answer SAFE: safe"},
 		{name: "empty", answer: " \n ", reason: "the oracle gave no answer"},
 		{name: "oracle error", err: os.ErrPermission, reason: "the oracle failed: " + os.ErrPermission.Error()},
 	}
@@ -137,8 +140,8 @@ func TestToolPromoteRefusesWithoutSafe(t *testing.T) {
 
 			res := RunTool(promoteCtx(dir, wt), "tool_promote", promoteInput("made_echo"))
 			want := "not promoted: " + tc.reason + "; ask the user"
-			if res.Content != want {
-				t.Fatalf("the result is %q, want %q (success=%v error=%q)", res.Content, want, res.Success, res.Error)
+			if res.Success || res.Error != want {
+				t.Fatalf("the result is success=%v error=%q, want a failure with error %q", res.Success, res.Error, want)
 			}
 			if _, err := os.Stat(promoteTarget(wt, "made_echo")); !os.IsNotExist(err) {
 				t.Fatalf("a refused tool was copied to the worktree: %v", err)
@@ -163,9 +166,11 @@ func TestToolPromoteUnknownNameIsError(t *testing.T) {
 	if res.Success || !strings.Contains(res.Error, "no Lua tool named \"no_such_tool\"") {
 		t.Fatalf("an unknown tool was not an error: success=%v error=%q", res.Success, res.Error)
 	}
-	res = RunTool(promoteCtx(dir, wt), "tool_promote", promoteInput("../escape"))
-	if res.Success {
-		t.Fatal("a name with a path was accepted")
+	for _, bad := range []string{"../escape", "mcp_github_x", "1starts_with_digit"} {
+		res = RunTool(promoteCtx(dir, wt), "tool_promote", promoteInput(bad))
+		if res.Success || !strings.Contains(res.Error, "is not valid") {
+			t.Fatalf("the bad name %q was not refused as invalid: success=%v error=%q", bad, res.Success, res.Error)
+		}
 	}
 	if oracle.calls != 0 {
 		t.Fatalf("the oracle was called %d times for an unknown tool, want 0", oracle.calls)
@@ -375,5 +380,123 @@ func TestToolPromoteRefusedForReadOnlyRole(t *testing.T) {
 	}
 	if oracle.calls != 0 {
 		t.Fatalf("the oracle was called %d times for a read-only role, want 0", oracle.calls)
+	}
+}
+
+// policyRunner is a SubAgentRunner that records the tool policy and the tool
+// list of each run. It answers SAFE, so the oracle lets the tool be copied.
+type policyRunner struct {
+	called    bool
+	policy    Policy
+	hasPolicy bool
+	tools     []string
+}
+
+func (r *policyRunner) answer(ctx context.Context, opts SubagentOptions) (string, error) {
+	r.called = true
+	r.policy, r.hasPolicy = PolicyOf(ctx)
+	r.tools = opts.Tools
+	return "SAFE", nil
+}
+
+func (r *policyRunner) RunTask(ctx context.Context, _ string, _ string, opts SubagentOptions) (string, error) {
+	return r.answer(ctx, opts)
+}
+
+func (r *policyRunner) RunTaskWithSystem(ctx context.Context, _ string, _ string, _ string, opts SubagentOptions) (string, error) {
+	return r.answer(ctx, opts)
+}
+
+// TestToolPromoteOracleUsesReadOnlyPolicy runs the real promoteOracle, not a
+// fake, with a fake SubAgentRunner. It checks the policy that the oracle run gets.
+func TestToolPromoteOracleUsesReadOnlyPolicy(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+	_, wt := linkedWorktree(t)
+	if res := createInRun(t, dir, "made_echo", createSource); !res.Success {
+		t.Fatalf("tool_create failed: %s", res.Error)
+	}
+	// SetSubAgentRunner replaces package globals. The test does not run in parallel.
+	oldSub, oldScout := subagentToolInstance, scoutToolInstance
+	t.Cleanup(func() {
+		subagentToolInstance, scoutToolInstance = oldSub, oldScout
+		if oldSub != nil {
+			registerTool("subagent", oldSub)
+		}
+		if oldScout != nil {
+			registerTool("scout", oldScout)
+		}
+	})
+	runner := &policyRunner{}
+	SetSubAgentRunner(runner)
+
+	res := RunTool(promoteCtx(dir, wt), "tool_promote", promoteInput("made_echo"))
+	if !res.Success {
+		t.Fatalf("a SAFE tool was not promoted: %s", res.Error)
+	}
+	if !runner.called || !runner.hasPolicy {
+		t.Fatalf("the oracle run did not reach the runner with a policy: called=%v policy=%v", runner.called, runner.hasPolicy)
+	}
+	if runner.policy.Role != "oracle" || runner.policy.Permission != PermissionReadOnly {
+		t.Fatalf("the oracle policy is role %q permission %q, want oracle read-only", runner.policy.Role, runner.policy.Permission)
+	}
+	if runner.policy.Tools == nil || len(runner.policy.Tools) != 0 {
+		t.Fatalf("the oracle policy lists tools %v, want an empty list", runner.policy.Tools)
+	}
+	if !slices.Equal(runner.tools, []string{"help"}) {
+		t.Fatalf("the oracle run offers tools %v, want [help]", runner.tools)
+	}
+}
+
+// submoduleCheckout makes a superproject with one submodule. It returns the
+// real path of the submodule checkout, whose .git is a file.
+func submoduleCheckout(t *testing.T) string {
+	t.Helper()
+	super := t.TempDir()
+	gitIn(t, super, "init", "-q")
+	gitIn(t, super, "commit", "-q", "--allow-empty", "-m", "init")
+	lib := t.TempDir()
+	gitIn(t, lib, "init", "-q")
+	gitIn(t, lib, "commit", "-q", "--allow-empty", "-m", "init")
+	gitIn(t, super, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "libsub")
+	real, err := filepath.EvalSymlinks(filepath.Join(super, "libsub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+// TestToolPromoteAcceptsGitFileRoots checks that a worktree root whose .git is
+// a file (a linked worktree or a submodule) is accepted.
+func TestToolPromoteAcceptsGitFileRoots(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+	if res := createInRun(t, dir, "made_echo", createSource); !res.Success {
+		t.Fatalf("tool_create failed: %s", res.Error)
+	}
+	_, wt := linkedWorktree(t)
+	sub := submoduleCheckout(t)
+
+	for _, tc := range []struct{ name, root string }{{"linked worktree", wt}, {"submodule", sub}} {
+		t.Run(tc.name, func(t *testing.T) {
+			info, err := os.Stat(filepath.Join(tc.root, ".git"))
+			if err != nil || !info.Mode().IsRegular() {
+				t.Fatalf("the fixture .git is not a file: %v", err)
+			}
+			oracle := useFakeOracle(t, "SAFE", nil)
+
+			res := RunTool(promoteCtx(dir, tc.root), "tool_promote", promoteInput("made_echo"))
+			if !res.Success {
+				t.Fatalf("a root with a .git file was refused: %s", res.Error)
+			}
+			if _, err := os.Stat(promoteTarget(tc.root, "made_echo")); err != nil {
+				t.Fatalf("the tool was not copied: %v", err)
+			}
+			if oracle.dir != tc.root {
+				t.Fatalf("the oracle works in %q, want %q", oracle.dir, tc.root)
+			}
+		})
 	}
 }

@@ -873,7 +873,7 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 	//     dispatches too, so a script cannot reach a tool its agent was
 	//     denied, or spawn a grandchild.
 	ctx = tools.WithToolGate(ctx, tools.DenySubagentRecursion())
-	ctx = tools.WithToolGate(ctx, tools.SubagentToolCreateGate(ctx, r.allowed))
+	ctx = tools.WithToolGate(ctx, tools.SubagentRoleToolGate(ctx, r.allowed))
 	if gate != nil {
 		ctx = tools.WithToolGate(ctx, gate)
 	}
