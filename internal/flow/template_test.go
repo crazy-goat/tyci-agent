@@ -2,6 +2,7 @@ package flow
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -314,6 +315,70 @@ func TestTemplatesValidate(t *testing.T) {
 		}
 		if len(paths) == 0 {
 			t.Fatalf("Init(%q) wrote no files", name)
+		}
+	}
+}
+
+// #214: a risky issue goes plan, plan_review, open_pr. The template validates, the human
+// state ask_plan is not answered by the oracle, and no route from the plan states reaches
+// the generic ask state.
+func TestIssueToMerge_PlanGate(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init("issue-to-merge", "", dir); err != nil {
+		t.Fatal(err)
+	}
+	wf, _, err := Lookup("issue-to-merge", t.TempDir(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &flowconfig.Config{
+		Models:       map[string]string{"m": "prov/model"},
+		DefaultModel: "m",
+		Roles: map[string]flowconfig.Role{
+			"worker": {Prompt: "W"}, "review": {Prompt: "R"}, "fixer": {Prompt: "F"}, "oracle": {Prompt: "O"},
+		},
+	}
+	if _, err := Validate(wf, cfg, wfResolver(wf)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got := wf.States["check_done"].On["go-risky"]; got != "open_pr_risky" {
+		t.Errorf("check_done go-risky -> %q", got)
+	}
+	if got := wf.States["open_pr_risky"].On; got["none"] != "plan" || got["found"] != "lock" {
+		t.Errorf("open_pr_risky on = %v", got)
+	}
+	if p := wf.States["plan"]; p.Agent != "oracle" || p.Task != "plan" || p.On["done"] != "plan_review" {
+		t.Errorf("plan = %+v", p)
+	}
+	pr := wf.States["plan_review"]
+	want := map[string]string{"APPROVE": "open_pr", "REJECT": "plan", "REJECT_LIMIT": "ask_plan", "DOUBT": "ask_plan", "default": "ask_plan"}
+	if pr.Agent != "oracle" || pr.Task != "plan_review" || !maps.Equal(pr.On, want) {
+		t.Errorf("plan_review = %+v, want on %v", pr, want)
+	}
+	ap := wf.States["ask_plan"]
+	if !ap.Human || ap.Ask == "" || ap.On["approve"] != "open_pr" || ap.On["replan"] != "plan" || ap.On["stop"] != "end" {
+		t.Errorf("ask_plan = %+v", ap)
+	}
+	r := &Runner{WF: wf, Agents: &fakeAgents{}}
+	if r.oracleMayAnswer(&RunState{Ask: &Ask{Message: "m"}}, ap) {
+		t.Error("the oracle may answer ask_plan")
+	}
+	// Walk the routes of the plan gate. Only the plan states are expanded: open_pr is
+	// the normal path after an approval, so its routes are not part of the gate.
+	seen := map[string]bool{}
+	queue := []string{"plan", "plan_review"}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if name == "ask" {
+			t.Fatal("the plan gate reaches the generic ask state")
+		}
+		if seen[name] || (name != "plan" && name != "plan_review" && name != "ask_plan") {
+			continue
+		}
+		seen[name] = true
+		for _, next := range wf.States[name].On {
+			queue = append(queue, next)
 		}
 	}
 }

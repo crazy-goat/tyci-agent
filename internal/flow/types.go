@@ -249,6 +249,9 @@ type RunContext struct {
 	Pause, Goto string
 	// Stats is filled by the agent runner when the agent ends. Nil: not wanted.
 	Stats *StepStats
+	// PlanRejects is the number of REJECT answers of the plan review since the last human
+	// answer, not counting this one (see planReviewKey).
+	PlanRejects int
 	// Summary is the text of the previous agent when this agent replaces it (#202).
 	// It is empty for a normal agent.
 	Summary string

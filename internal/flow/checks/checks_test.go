@@ -81,6 +81,14 @@ func TestIssueDone_WriteAndLabelGoes(t *testing.T) {
 	}
 }
 
+// #214: a risky issue waits for its plan approval before the code step.
+func TestIssueDone_RiskyLabelGoesRisky(t *testing.T) {
+	key, exit, _, _, _ := run(t, map[string]string{"ISSUE_JSON": issueJSON("OPEN", "alice", "accepted", "risky"), "PERM_RESP": perm("write")})
+	if key != "go-risky" || exit != 0 {
+		t.Fatalf("key=%q exit=%d", key, exit)
+	}
+}
+
 func TestIssueDone_AdminGoes(t *testing.T) {
 	key, _, _, _, _ := run(t, map[string]string{"ISSUE_JSON": issueJSON("OPEN", "alice", "accepted"), "PERM_RESP": perm("admin")})
 	if key != "go" {

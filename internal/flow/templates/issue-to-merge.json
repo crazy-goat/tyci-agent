@@ -4,8 +4,12 @@
   "params": [{"name": "issue", "description": "GitHub issue number", "required": true}],
   "defaults": {"max_visits": 0},
   "states": {
-    "check_done": {"check": "checks/issue_done.sh", "on": {"skip": "end", "go": "open_pr", "default": "fixer"}},
+    "check_done": {"check": "checks/issue_done.sh", "on": {"skip": "end", "go": "open_pr", "go-risky": "open_pr_risky", "default": "fixer"}},
     "open_pr":    {"check": "checks/open_pr.sh", "on": {"none": "code", "found": "lock", "fail": "fixer", "default": "fixer"}},
+    "open_pr_risky": {"check": "checks/open_pr.sh", "on": {"none": "plan", "found": "lock", "fail": "fixer", "default": "fixer"}},
+    "plan":       {"agent": "oracle", "task": "plan", "on": {"done": "plan_review", "default": "ask_plan"}},
+    "plan_review": {"agent": "oracle", "task": "plan_review", "on": {"APPROVE": "open_pr", "REJECT": "plan", "REJECT_LIMIT": "ask_plan", "DOUBT": "ask_plan", "default": "ask_plan"}},
+    "ask_plan":   {"ask": "The plan of the risky issue waits for your decision. Answer approve to code the issue, replan to plan it again, or stop to end the run.", "human": true, "on": {"approve": "open_pr", "replan": "plan", "stop": "end"}},
     "code":       {"agent": "worker", "max_visits": 3, "on": {"done": "review", "default": "ask"}},
     "review":     {"agent": "review", "on": {"ACCEPT": "lock", "CHANGES": "code", "default": "ask"}},
     "lock":       {"check": "checks/lock.sh", "timeout_sec": 14400, "on": {"ok": "update", "timeout": "ask", "fail": "fixer", "default": "fixer"}},

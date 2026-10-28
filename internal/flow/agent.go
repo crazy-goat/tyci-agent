@@ -72,6 +72,15 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 		}
 		return "done", session, nil
 	}
+	if isPlanReview(role, task) {
+		// The answer is the text. It is saved as review.txt, so the next plan reads why it was rejected.
+		if rc.ArtifactDir != "" {
+			if err := os.WriteFile(filepath.Join(rc.ArtifactDir, "review.txt"), []byte(strings.TrimSpace(out)+"\n"), 0o600); err != nil {
+				return "", session, err
+			}
+		}
+		return planReviewKey(out, rc.PlanRejects), session, nil
+	}
 	if session, err = r.ensureReport(ctx, role, session, rc); err != nil {
 		return "", session, err
 	}
@@ -112,7 +121,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 			return "", "", err
 		}
 	}
-	if role == "worker" || rc.Summary != "" {
+	if role == "worker" || rc.Summary != "" || isPlanStep(role, task) {
 		// A run without an issue param has no issue text to add (#520).
 		if rc.Issue > 0 {
 			fetch := r.IssueContext
@@ -139,7 +148,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 			text += "Steps since your last visit, with their artifact files (read them with the read tool):\n\n" + rc.RunSoFar + "\n"
 		}
 		text += "Your artifact dir: " + rc.ArtifactDir + "\n"
-		if !isPauseOracle(role, task) && !isSavedOracle(role, task) {
+		if !isPauseOracle(role, task) && !isSavedOracle(role, task) && !isPlanReview(role, task) {
 			text += "Before you end, you MUST write " + reportPath(rc) + ": what you did, the result, what is left.\n"
 		}
 	}
@@ -364,6 +373,50 @@ func oracleKey(answer string) string {
 		return strings.TrimSpace(key + " " + note)
 	}
 	return "ask the oracle answer is not goto:<state>, stop or ask: " + oracleFirstLine(answer)
+}
+
+// planRejectLimit is the number of REJECT answers of the plan review after which the run
+// goes to a human (ask_plan), so a plan that the oracle keeps rejecting does not loop.
+const planRejectLimit = 3
+
+// isPlanReview reports whether the agent call is the plan review of a risky issue (#214).
+func isPlanReview(role, task string) bool {
+	return role == "oracle" && task == "plan_review"
+}
+
+// isPlanStep reports whether the agent call is a step of the plan gate: the plan or the
+// plan review. Both read the issue text.
+func isPlanStep(role, task string) bool {
+	return role == "oracle" && (task == "plan" || isPlanReview(role, task))
+}
+
+// planReviewKey reads the verdict of a plan review. The first line of the answer is
+// APPROVE, REJECT or DOUBT. Any other answer is DOUBT, which goes to a human. rejects is
+// the number of REJECT answers since the last human answer, not counting this one. The
+// REJECT that reaches planRejectLimit is REJECT_LIMIT, which also goes to a human.
+func planReviewKey(answer string, rejects int) string {
+	switch oracleFirstLine(answer) {
+	case "APPROVE":
+		return "APPROVE"
+	case "REJECT":
+		if rejects+1 >= planRejectLimit {
+			return "REJECT_LIMIT"
+		}
+		return "REJECT"
+	}
+	return "DOUBT"
+}
+
+// planRejects counts the REJECT answers of the plan review in the history of the run,
+// after the last human answer (an ask step). A new answer by a human starts the count again.
+func planRejects(st *RunState) int {
+	n := 0
+	for i := len(st.History) - 1; i >= 0 && st.History[i].Kind != "ask"; i-- {
+		if h := st.History[i]; h.Task == "plan_review" && h.Key == "REJECT" {
+			n++
+		}
+	}
+	return n
 }
 
 // fetchIssueContext returns the issue text. Text from authors without write
