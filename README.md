@@ -680,7 +680,7 @@ tyci remind cancel 3f9a1c2e      # Cancel one reminder by its id
 
 ### Display Modes
 
-- **run** — Plain text: only the final answer on stdout; errors, retry and fallback notices on stderr
+- **run** — Plain text: only the final answer on stdout; errors, retry, fallback and max-iterations notices on stderr
 - **tui** — Bubble Tea TUI with split-pane layout and mouse support
 
 #### `tyci completion`
