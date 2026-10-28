@@ -223,6 +223,7 @@ type RunContext struct {
 	Run           string // run id; names the agent job "<run>/<role>"
 	Note          string // orchestrator note for the worker
 	Input         string // text input of a RunText run
+	ReadOnly      bool   // text run: the role gets read-only permission, whatever its config says
 	StateName     string
 	Workflow      string // workflow name
 	// Prompt overrides the role prompt (the state "prompt"). Empty: the role prompt.
@@ -249,6 +250,9 @@ type RunContext struct {
 	Pause, Goto string
 	// Stats is filled by the agent runner when the agent ends. Nil: not wanted.
 	Stats *StepStats
+	// PlanRejects is the number of REJECT answers of the plan review since the last human
+	// answer, not counting this one (see planReviewKey).
+	PlanRejects int
 	// Summary is the text of the previous agent when this agent replaces it (#202).
 	// It is empty for a normal agent.
 	Summary string

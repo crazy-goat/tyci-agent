@@ -140,11 +140,18 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 		if err != nil {
 			return "", err
 		}
+		// A text run has no run worktree and no write access. Its role runs
+		// read-only in an empty temporary dir, never in the main checkout.
+		dir, err := os.MkdirTemp("", "tyci-text-")
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = os.RemoveAll(dir) }()
 		agents := NewSubagentRunner(cfg, spawn)
 		agents.Render = TaskTemplates{Dir: wf.Source}
 		out, _, err := agents.Text(ctx, s.Agent, s.Task, RunContext{
-			Repo: info.Repo, DefaultBranch: info.DefaultBranch, Worktree: info.Root, Input: input,
-			Workflow: wf.Name, Prompt: s.Prompt,
+			Repo: info.Repo, DefaultBranch: info.DefaultBranch, Worktree: dir, Input: input,
+			ReadOnly: true, Workflow: wf.Name, Prompt: s.Prompt,
 		})
 		return out, err
 	}

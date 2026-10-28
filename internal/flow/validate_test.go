@@ -127,8 +127,8 @@ func agentWF(role string) *Workflow {
 
 func TestValidate_UndefinedRole(t *testing.T) {
 	cfg := vCfg(map[string]string{"m": "p/m"}, nil)
-	_, err := Validate(agentWF("planner"), cfg, okResolve)
-	if err == nil || !strings.Contains(err.Error(), `state "code"`) || !strings.Contains(err.Error(), `role "planner" is not defined`) {
+	_, err := Validate(agentWF("auditor"), cfg, okResolve)
+	if err == nil || !strings.Contains(err.Error(), `state "code"`) || !strings.Contains(err.Error(), `role "auditor" is not defined`) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -179,7 +179,7 @@ func TestValidate_SameModelWarnsOnly(t *testing.T) {
 
 func TestValidate_AllProblemsListedTogether(t *testing.T) {
 	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{
-		"a":   {Agent: "planner", On: map[string]string{"x": "nowhere"}},
+		"a":   {Agent: "auditor", On: map[string]string{"x": "nowhere"}},
 		"b":   {Agent: "other", On: map[string]string{"x": "end"}},
 		"end": {End: true},
 	}}

@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Flow: `planner` is a builtin role with the permission `worktree-write` and network on. Its prompt tells it to read the code and the open issues, search for duplicates, create an issue only after the user says "create it", never set a milestone or the `accepted` label, and write files only in its own worktree (#798).
 - Lua tools: the `tool_create` tool lets the main chat, and a workflow role whose `tools` list names it, create a Lua tool in the run or session folder. The tool lasts until that run or session ends (#213).
 - Memory: a workflow role keeps one private note in `~/.tyci/memory/<repo>/<role>.md`. The role writes it with `memory(scope="role")`, and the note is loaded into the system prompt of that role only. The file is outside the repository (#211).
 - Workflows: the `issue-to-merge` workflow assigns the issue to the account that runs it. The gate skips an issue that another account is assigned to, so two runs on two machines are unlikely to work on the same issue. A short check-then-assign window remains: two runs that start within seconds of each other can both assign the issue. The assignment stays after the run ends. A run of another account then skips the issue with no message. Release it with `gh issue edit <N> -R <repo> --remove-assignee <login>` (#753).
+- Workflows: the `issue-to-merge` workflow asks for a plan before the code step of an issue with the label `risky`. An oracle reviews the plan. The run pauses at `ask_plan` after a doubt or three rejected plans, and a human answers `approve`, `replan` or `stop`. A copied workflow does not get the gate. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again (#214).
 - Workflows: the `issue-to-merge` workflow pauses at the new state `ask_protected` when the pull request changes protected paths (`.github/`, `.tyci/`, `internal/flow/checks/`). A human answers `approve` to merge the pull request through the run, or `stop` to end the run. The oracle never answers this pause, and it cannot send the run to the approved merge (#753).
 
 ### Changed
@@ -33,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Workflows: a role agent that is resumed to write its `report.md` keeps its tool policy. Its `write` and `edit` refuse paths outside the run worktree, as in the first visit (#446).
 - Workflows: the `rebalance` workflow shows the reason why the proposal is not valid when the split pauses after three invalid proposals. The ask text no longer says that a proposal is shown below in that case, and it says to answer `yes` only for a valid proposal (#740).
 - Flow: the orchestrator releases its paused runs when it stops. They no longer take a worker slot, so a resume of another run is not refused at `orchestrator.workers` (#731).
+- Flow: a text run (the `roadmap` oracle) runs read-only in an empty temporary dir, not in the main checkout. It can no longer write files there (#789).
 
 ## [0.10.0] - 2026-10-14
 
