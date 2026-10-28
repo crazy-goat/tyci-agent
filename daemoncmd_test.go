@@ -89,7 +89,7 @@ func TestWorkflowResumeRejectWithTheSameRunNumberInTwoRepos(t *testing.T) {
 	}
 	id := strings.TrimPrefix(decodeWorkflowResult(t, out).RunID, "#")
 	// A workflow proposal waits in the paused run.
-	runDir := flow.RunDir(home, info.Name(), id)
+	runDir := flow.RunDir(home, info.Key(), id)
 	st, err := flow.Load(runDir)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestWorkflowManagerSavesTheStartTrigger(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the run did not pause")
 	}
-	st, err := flow.Load(flow.RunDir(home, info.Name(), id))
+	st, err := flow.Load(flow.RunDir(home, info.Key(), id))
 	if err != nil || st.Trigger != "ci_failure:acme/demo:main@abc" {
 		t.Fatalf("run file trigger %q (%v)", st.Trigger, err)
 	}

@@ -151,7 +151,7 @@ func (c cronPoller) Poll(ctx context.Context) ([]Trigger, error) { return nil, c
 
 // repoRuns reads every run file of repo ("owner/name").
 func repoRuns(home, repo string) []*flow.RunState {
-	name := flow.RepoInfo{Repo: repo}.Name()
+	name := flow.RepoKey(repo)
 	var out []*flow.RunState
 	for _, st := range flow.RecentRuns(home, name, math.MaxInt) {
 		if st.Repo == repo {

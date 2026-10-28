@@ -138,14 +138,14 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 				return addRunWorktree(ctx, info, runID, issue)
 			},
 			NewStore: func(runID string) (*Store, error) {
-				return &Store{Dir: RunDir(info.Home, info.Name(), runID)}, nil
+				return &Store{Dir: RunDir(info.Home, info.Key(), runID)}, nil
 			},
-			NewRunID: func() (string, error) { return reserveRunID(info.Home, info.Name(), info.MainRoot) },
+			NewRunID: func() (string, error) { return reserveRunID(info.Home, info.Key(), info.MainRoot) },
 		}
 		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Params: req.Params, Trigger: req.Trigger})
 	}
 	m.NewRunner = func(info RepoInfo, wf *Workflow, st *RunState) *Runner {
-		runDir := RunDir(info.Home, info.Name(), st.Run)
+		runDir := RunDir(info.Home, info.Key(), st.Run)
 		// prURL links the merge request on GitLab. The runner saves it with the state.
 		st.GitLabURL = info.GitLabURL
 		cfg, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
@@ -295,7 +295,7 @@ func (c ChatTools) List(archived bool, limit, offset int) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	list, err := ListRuns(info.Home, info.Name(), archived, limit, offset)
+	list, err := ListRuns(info.Home, info.Key(), archived, limit, offset)
 	if err != nil {
 		return nil, err
 	}

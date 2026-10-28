@@ -25,11 +25,37 @@ type Store struct{ Dir string }
 // runs dir of the repository, next to the run dirs.
 const runCounterFile = "counter"
 
+// RepoKey returns the runs dir name of repo ("owner/name", or a GitLab path with
+// groups): every "/" becomes "+". No GitHub or GitLab name has a "+", so two
+// repos never share a runs dir (#846).
+func RepoKey(repo string) string { return strings.ReplaceAll(repo, "/", "+") }
+
+// legacyKey returns the runs dir name that key had before #846 (the name without
+// the owner) and the repo of key. ok is false for a key without an owner.
+func legacyKey(key string) (legacy, repo string, ok bool) {
+	i := strings.LastIndex(key, "+")
+	if i < 0 {
+		return "", "", false
+	}
+	return key[i+1:], strings.ReplaceAll(key, "+", "/"), true
+}
+
+// legacyRunOf reports whether st, read from the legacy runs dir, is a run of
+// repo. A state without a repo is taken as one, as before #846. It fills in the
+// repo of such a state.
+func legacyRunOf(st *RunState, repo string) bool {
+	if st.Repo == "" {
+		st.Repo = repo
+	}
+	return st.Repo == repo
+}
+
 // NewRunID reserves the next run number of repository repoName and returns it
 // as the run id, for example "17". The number is kept in runCounterFile under the
 // runs lock, so parallel starts get different numbers, and a number is never
 // reused, even after its run dir is deleted. A missing counter starts after the
-// highest existing run number.
+// highest existing run number, also of the legacy runs dir (#846), so a new run
+// number never shadows an old run of the repo.
 func NewRunID(home, repoName string) (string, error) {
 	base := filepath.Join(home, ".tyci", "runs", repoName)
 	if err := os.MkdirAll(base, 0o700); err != nil {
@@ -44,6 +70,14 @@ func NewRunID(home, repoName string) (string, error) {
 	last, err := readRunCounter(path, base)
 	if err != nil {
 		return "", err
+	}
+	if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+		if legacy, _, ok := legacyKey(repoName); ok {
+			old := filepath.Join(home, ".tyci", "runs", legacy)
+			if n, err := readRunCounter(filepath.Join(old, runCounterFile), old); err == nil {
+				last = max(last, n)
+			}
+		}
 	}
 	next := last + 1
 	if err := writeFileAtomic(path, []byte(strconv.Itoa(next)+"\n")); err != nil {
@@ -106,9 +140,23 @@ func readRunCounter(path, base string) (int, error) {
 	return highest, nil
 }
 
-// RunDir returns <home>/.tyci/runs/<repo>/<run>.
+// RunDir returns <home>/.tyci/runs/<repo>/<run>. When that dir has no state
+// but the legacy runs dir (before #846) has this run of the repo, it returns
+// the legacy dir, so old runs still load and resume.
 func RunDir(home, repoName, runID string) string {
-	return filepath.Join(home, ".tyci", "runs", repoName, runID)
+	dir := filepath.Join(home, ".tyci", "runs", repoName, runID)
+	legacy, repo, ok := legacyKey(repoName)
+	if !ok {
+		return dir
+	}
+	if _, err := os.Stat(StatePath(dir)); err == nil {
+		return dir
+	}
+	old := filepath.Join(home, ".tyci", "runs", legacy, runID)
+	if st, err := Load(old); err == nil && legacyRunOf(st, repo) {
+		return old
+	}
+	return dir
 }
 
 // StatePath returns the state.json of a run dir.
@@ -225,11 +273,11 @@ func Load(dir string) (*RunState, error) {
 // LatestRun returns the newest run directory of a repo. See runDirsNewestFirst
 // for the order.
 func LatestRun(home, repoName string) (string, error) {
-	base, names := runDirsNewestFirst(home, repoName)
-	if len(names) == 0 {
-		return "", fmt.Errorf("flow: no runs in %s", base)
+	dirs := runDirsNewestFirst(home, repoName)
+	if len(dirs) == 0 {
+		return "", fmt.Errorf("flow: no runs in %s", filepath.Join(home, ".tyci", "runs", repoName))
 	}
-	return filepath.Join(base, names[0]), nil
+	return dirs[0], nil
 }
 
 // newerRunFirst orders run dir names newest first. Run numbers compare by value
@@ -261,34 +309,59 @@ func runNumber(name string) (n int, ok bool) {
 	return n, err == nil
 }
 
-// runDirsNewestFirst returns the names of the run directories of a repo, newest
-// first: run numbers by value, then old ids by their timestamp. A missing repo
-// directory gives no names.
-func runDirsNewestFirst(home, repoName string) (base string, names []string) {
-	base = filepath.Join(home, ".tyci", "runs", repoName)
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return base, nil
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
+// runDirsNewestFirst returns the run directories of a repo, newest first: run
+// numbers by value, then old ids by their timestamp. It adds the runs of the
+// repo in the legacy runs dir (before #846), and the legacy dirs whose state
+// cannot be read. A missing repo directory gives no dirs.
+func runDirsNewestFirst(home, repoName string) []string {
+	runs := filepath.Join(home, ".tyci", "runs")
+	var dirs []string
+	add := func(base string, keep func(dir string) bool) {
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if dir := filepath.Join(base, e.Name()); e.IsDir() && keep(dir) {
+				dirs = append(dirs, dir)
+			}
 		}
 	}
-	slices.SortFunc(names, newerRunFirst)
-	return base, names
+	add(filepath.Join(runs, repoName), func(string) bool { return true })
+	if legacy, repo, ok := legacyKey(repoName); ok {
+		// An unreadable state may be a run of the repo: keep it, so the
+		// callers skip or report it as they do in the repo's own dir.
+		add(filepath.Join(runs, legacy), func(dir string) bool {
+			st, err := Load(dir)
+			if err != nil {
+				return !errors.Is(err, fs.ErrNotExist)
+			}
+			return legacyRunOf(st, repo)
+		})
+	}
+	slices.SortFunc(dirs, func(a, b string) int { return newerRunFirst(filepath.Base(a), filepath.Base(b)) })
+	return dirs
+}
+
+// loadOf is Load for a dir of runDirsNewestFirst: a state without a repo gets
+// the repo of repoName.
+func loadOf(dir, repoName string) (*RunState, error) {
+	st, err := Load(dir)
+	if err == nil && st.Repo == "" {
+		st.Repo = strings.ReplaceAll(repoName, "+", "/")
+	}
+	return st, err
 }
 
 // RecentRuns returns the saved states of the n newest runs of a repo, newest
 // first. Runs with an unreadable state.json are skipped.
 func RecentRuns(home, repoName string, n int) []*RunState {
-	base, names := runDirsNewestFirst(home, repoName)
 	var out []*RunState
-	for _, name := range names {
+	for _, dir := range runDirsNewestFirst(home, repoName) {
 		if len(out) == n {
 			break
 		}
-		if st, err := Load(filepath.Join(base, name)); err == nil {
+		if st, err := loadOf(dir, repoName); err == nil {
 			out = append(out, st)
 		}
 	}
@@ -331,10 +404,9 @@ func ListRuns(home, repoName string, archived bool, limit, offset int) (RunList,
 	if offset < 0 {
 		return RunList{}, errors.New("offset must not be negative")
 	}
-	base, names := runDirsNewestFirst(home, repoName)
 	var all []*RunState
-	for _, name := range names {
-		st, err := Load(filepath.Join(base, name))
+	for _, dir := range runDirsNewestFirst(home, repoName) {
+		st, err := loadOf(dir, repoName)
 		if err != nil {
 			continue
 		}
@@ -361,7 +433,7 @@ func RunByID(home, repoName, runID string) (st *RunState, ok bool, err error) {
 	if !ok {
 		return nil, false, nil
 	}
-	st, err = Load(filepath.Join(home, ".tyci", "runs", repoName, id))
+	st, err = loadOf(RunDir(home, repoName, id), repoName)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return nil, false, nil
 	}
@@ -387,19 +459,12 @@ func RunOfSession(home, repoName string, sessions []string) (st *RunState, ok bo
 		return nil, false, nil
 	}
 	base := filepath.Join(home, ".tyci", "runs", repoName)
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, false, nil
-		}
+	if _, err := os.ReadDir(base); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, false, fmt.Errorf("flow: read runs of %s: %w", repoName, err)
 	}
 	var unreadable error
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		run, err := Load(filepath.Join(base, e.Name()))
+	for _, dir := range runDirsNewestFirst(home, repoName) {
+		run, err := loadOf(dir, repoName)
 		if err != nil {
 			if unreadable == nil && !errors.Is(err, fs.ErrNotExist) {
 				unreadable = err

@@ -56,10 +56,9 @@ type RepoInfo struct {
 	GitLabURL string
 }
 
-// Name returns the repository name without the owner or groups.
-func (i RepoInfo) Name() string {
-	return i.Repo[strings.LastIndex(i.Repo, "/")+1:]
-}
+// Key returns the runs dir name of the repository (RepoKey): the owner is kept,
+// so acme/demo and other/demo do not share runs (#846).
+func (i RepoInfo) Key() string { return RepoKey(i.Repo) }
 
 // StartRequest says which workflow to start and its positional param values.
 type StartRequest struct {
@@ -300,9 +299,8 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 		}
 		return fmt.Errorf("%w: run %s is active for issue %d", ErrBusy, ShowRunID(id), issue)
 	}
-	entries, _ := os.ReadDir(filepath.Dir(RunDir(info.Home, info.Name(), "x")))
-	for _, e := range entries {
-		st, err := Load(RunDir(info.Home, info.Name(), e.Name()))
+	for _, dir := range runDirsNewestFirst(info.Home, info.Key()) {
+		st, err := Load(dir)
 		if err != nil || st.Issue != issue {
 			continue
 		}
@@ -355,7 +353,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 			}
 			m.mu.Unlock()
 			close(done)
-			endRunTools(st.Status, RunDir(info.Home, info.Name(), st.Run))
+			endRunTools(st.Status, RunDir(info.Home, info.Key(), st.Run))
 			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason, Result: st.Result})
 		}()
 		defer func() {
@@ -373,7 +371,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 		}
 		// The Lua tools that tool_create made in this run are registered again: after
 		// a restart the registry is empty. A run without a tools folder is not changed.
-		tools.ReloadRunTools(RunDir(info.Home, info.Name(), st.Run), r.Warn)
+		tools.ReloadRunTools(RunDir(info.Home, info.Key(), st.Run), r.Warn)
 		err := do(ctx, r)
 		m.mu.Lock()
 		a := m.active[st.Run]
@@ -581,7 +579,7 @@ func (m *Manager) answerProposal(info RepoInfo, wf *Workflow, st *RunState, answ
 		return fmt.Errorf("run %s changed, its proposal is no longer open", ShowRunID(st.Run))
 	}
 	st = cur
-	runDir := RunDir(info.Home, info.Name(), st.Run)
+	runDir := RunDir(info.Home, info.Key(), st.Run)
 	note := " Workflow proposal rejected."
 	if answer == "apply" {
 		url, err := ApplyProposal(ctx, info, st, st.Ask.Proposal)
@@ -632,7 +630,7 @@ func (m *Manager) Recent(n int) []RunView {
 func (m *Manager) RecentIn(info RepoInfo, n int) []RunView {
 	var out []RunView
 	wfs := map[string]*Workflow{}
-	for _, st := range RecentRuns(info.Home, info.Name(), n) {
+	for _, st := range RecentRuns(info.Home, info.Key(), n) {
 		v := RunView{State: st}
 		if st.Status == "running" {
 			wf, ok := wfs[st.Workflow]
@@ -651,17 +649,17 @@ func (m *Manager) RecentIn(info RepoInfo, n int) []RunView {
 
 func loadRun(info RepoInfo, runID string) (*RunState, error) {
 	if runID == "" {
-		dir, err := LatestRun(info.Home, info.Name())
+		dir, err := LatestRun(info.Home, info.Key())
 		if err != nil {
 			return nil, err
 		}
-		return Load(dir)
+		return loadOf(dir, info.Key())
 	}
 	id, ok := ParseRunID(runID)
 	if !ok {
 		return nil, fmt.Errorf("bad run id %q", runID)
 	}
-	st, err := Load(RunDir(info.Home, info.Name(), id))
+	st, err := loadOf(RunDir(info.Home, info.Key(), id), info.Key())
 	if err != nil {
 		return nil, errors.New("run " + ShowRunID(id) + " not found")
 	}

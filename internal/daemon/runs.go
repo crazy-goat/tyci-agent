@@ -35,7 +35,7 @@ func (r *ManagerRuns) event(ev flow.RunEvent) {
 	res := Result{Status: ev.Status, Reason: ev.Reason, PR: ev.PR}
 	if ev.Status == "paused" {
 		// The event has no ask text; the run file has it.
-		if st, err := flow.Load(flow.RunDir(r.home, flow.RepoInfo{Repo: r.repo}.Name(), ev.Run)); err == nil && st.Ask != nil {
+		if st, err := flow.Load(flow.RunDir(r.home, flow.RepoKey(r.repo), ev.Run)); err == nil && st.Ask != nil {
 			res.Reason = st.Ask.Message
 		}
 	}

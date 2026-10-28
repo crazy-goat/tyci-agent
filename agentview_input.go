@@ -134,7 +134,7 @@ func runOfJobName(info flow.RepoInfo, jobID string) (*flow.RunState, bool, error
 	if !named {
 		return nil, false, nil
 	}
-	return flow.RunByID(info.Home, info.Name(), run)
+	return flow.RunByID(info.Home, info.Key(), run)
 }
 
 // chainIDs returns the chain of the job id whose stashed entry is e.
@@ -149,7 +149,7 @@ func chainIDs(id string, e resumableEntry) []string {
 func runWorkdirIn(info flow.RepoInfo, jobID string) (string, error) {
 	st, ok, err := runOfJobName(info, jobID)
 	if err == nil && !ok {
-		st, ok, err = flow.RunOfSession(info.Home, info.Name(), runIDsOf(jobID))
+		st, ok, err = flow.RunOfSession(info.Home, info.Key(), runIDsOf(jobID))
 	}
 	if err != nil {
 		return "", fmt.Errorf("cannot check the workflow runs for the agent: %w", err)

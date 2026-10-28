@@ -100,7 +100,7 @@ func TestRunEndRemovesToolMadeByAgent(t *testing.T) {
 	defer tools.SnapshotLuaToolsForTesting()()
 	info := RepoInfo{Home: t.TempDir(), Root: t.TempDir(), Repo: "o/r", DefaultBranch: "main"}
 	st := toolsRun("run1")
-	runDir := RunDir(info.Home, info.Name(), st.Run)
+	runDir := RunDir(info.Home, info.Key(), st.Run)
 	wf := toolsWorkflow()
 	// The first spawn is the agent; the report reminder that follows resumes its session.
 	spawn := func(ctx context.Context, sp tools.TaskSpec) (string, string, error) {
@@ -138,7 +138,7 @@ func TestRunStartReloadsToolsOfRunFolder(t *testing.T) {
 	defer tools.SnapshotLuaToolsForTesting()()
 	info := RepoInfo{Home: t.TempDir(), Root: t.TempDir(), Repo: "o/r", DefaultBranch: "main"}
 	st := toolsRun("run2")
-	runDir := RunDir(info.Home, info.Name(), st.Run)
+	runDir := RunDir(info.Home, info.Key(), st.Run)
 	if err := os.MkdirAll(filepath.Join(runDir, "tools"), 0o700); err != nil {
 		t.Fatal(err)
 	}

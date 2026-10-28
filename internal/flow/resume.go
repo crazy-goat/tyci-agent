@@ -109,7 +109,7 @@ func claim(dir string, st *RunState, self int) error {
 // it pauses the run instead. It returns false when the run did not start: it
 // is paused now, or another instance claimed it. m.mu must be held.
 func (m *Manager) resumeRun(info RepoInfo, st *RunState) (bool, error) {
-	dir := RunDir(info.Home, info.Name(), st.Run)
+	dir := RunDir(info.Home, info.Key(), st.Run)
 	wf, err := m.Workflow(info, st.Workflow)
 	if err != nil {
 		return false, err
@@ -207,7 +207,7 @@ func (m *Manager) AskUnfinished() {
 			notes = append(notes, "cannot pause run "+ShowRunID(st.Run)+": "+err.Error())
 			continue
 		}
-		if err := m.pauseStale(RunDir(info.Home, info.Name(), st.Run), wf, "tyci restarted", false); err != nil {
+		if err := m.pauseStale(RunDir(info.Home, info.Key(), st.Run), wf, "tyci restarted", false); err != nil {
 			notes = append(notes, "cannot pause run "+ShowRunID(st.Run)+": "+err.Error())
 		}
 	}
