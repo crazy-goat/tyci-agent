@@ -871,6 +871,10 @@ func TestPruneAskRoutesWhileJobFinishes(t *testing.T) {
 
 	askRoutes.Lock()
 	defer askRoutes.Unlock()
+	// The job can finish after the last prune of the loop, so the loop may
+	// never see it as finished. This prune runs after <-finished, so the job
+	// is no longer live and its route must go.
+	pruneAskRoutes(reg)
 	if _, ok := askRoutes.asker[1]; ok {
 		t.Fatal("route of a finished job was not pruned")
 	}
