@@ -301,12 +301,12 @@ func (h *harness) greenCI(id int64, sha string) {
 	h.ci.SetRun("tests.yaml", "main", forge.CIRun{ID: id, SHA: sha, CreatedAt: time.Now()})
 }
 
-// waitCIPolls waits for n more polls. The issue poller has the same interval
-// as the CI poller, so its count tells that the CI poller ran too.
+// waitCIPolls waits for n more LatestCI calls. Each of them sees the CI run
+// set before the call; n >= 2 makes sure that a whole poll ran after it.
 func (h *harness) waitCIPolls(t *testing.T, n int) {
 	t.Helper()
-	waitPolls(t, h.forge, n)
-	time.Sleep(3 * h.cfg.PollInterval)
+	from := h.ci.Polls()
+	waitFor(t, "CI polls", func() bool { return h.ci.Polls() >= from+n })
 }
 
 func TestDaemonCIFailureSameSHANotRepeated(t *testing.T) {

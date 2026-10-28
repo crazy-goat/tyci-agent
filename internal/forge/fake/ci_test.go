@@ -23,6 +23,9 @@ func TestCI(t *testing.T) {
 	if _, _, err := c.LatestCI(ctx, "w", "main"); !errors.Is(err, boom) {
 		t.Fatalf("err %v", err)
 	}
+	if n := c.Polls(); n != 3 {
+		t.Fatalf("polls %d, want 3", n)
+	}
 	if err := c.Comment(ctx, 3, "hi"); err != nil {
 		t.Fatal(err)
 	}

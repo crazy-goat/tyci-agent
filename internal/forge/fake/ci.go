@@ -21,6 +21,7 @@ type CI struct {
 	runs     map[string]forge.CIRun // key: workflow + " " + branch
 	err      error
 	comments []Comment
+	polls    int
 }
 
 var (
@@ -49,11 +50,19 @@ func (c *CI) SetErr(err error) {
 func (c *CI) LatestCI(_ context.Context, workflow, branch string) (forge.CIRun, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.polls++
 	if c.err != nil {
 		return forge.CIRun{}, false, c.err
 	}
 	r, ok := c.runs[workflow+" "+branch]
 	return r, ok, nil
+}
+
+// Polls returns how many times LatestCI was called.
+func (c *CI) Polls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.polls
 }
 
 // Comment records the comment.

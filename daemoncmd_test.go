@@ -123,6 +123,35 @@ func TestWorkflowResumeRejectWithTheSameRunNumberInTwoRepos(t *testing.T) {
 	}
 }
 
+// The production Prepare keeps the start trigger in the run file: the daemon
+// dedup of fix-ci reads it there.
+func TestWorkflowManagerSavesTheStartTrigger(t *testing.T) {
+	home := wfHome(t)
+	info := wfRunRepo(t, home)
+	askFlow(t, home)
+	m := flow.NewManager(nil, workflowSpawn)
+	m.Info = func() (flow.RepoInfo, error) { return info, nil }
+	ended := make(chan string, 4)
+	m.Subscribe(func(ev flow.RunEvent) {
+		if ev.Status != "running" {
+			ended <- ev.Run
+		}
+	})
+	id, _, err := m.Start(context.Background(), flow.StartRequest{Workflow: "ask-flow", Params: []string{"9"}, Trigger: "ci_failure:acme/demo:main@abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ended:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the run did not pause")
+	}
+	st, err := flow.Load(flow.RunDir(home, info.Name(), id))
+	if err != nil || st.Trigger != "ci_failure:acme/demo:main@abc" {
+		t.Fatalf("run file trigger %q (%v)", st.Trigger, err)
+	}
+}
+
 // stubBackend answers runs.get with a fixed state.
 type stubBackend struct{ st *flow.RunState }
 
