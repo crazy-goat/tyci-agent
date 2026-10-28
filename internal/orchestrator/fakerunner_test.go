@@ -45,6 +45,7 @@ type fakeRunner struct {
 	paused      []int         // issues of paused runs (Adopter); their handles ask at once
 	closes      chan []string // params of each CloseWorkflow start
 	closeH      *fakeHandle   // the handle of the last CloseWorkflow start
+	released    int           // calls of ReleaseAdopted (Adopter)
 	closeErr    error         // when set, Start for CloseWorkflow fails with it
 }
 
@@ -115,6 +116,18 @@ func (r *fakeRunner) Adoptable() []int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append(append([]int(nil), r.resumed...), r.paused...)
+}
+
+func (r *fakeRunner) ReleaseAdopted() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.released++
+}
+
+func (r *fakeRunner) releases() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.released
 }
 
 func (r *fakeRunner) AdoptableResumed() []int {

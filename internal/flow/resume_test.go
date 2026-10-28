@@ -808,6 +808,30 @@ func TestWorkflowStart_ResumeCountsHeldPausedRun(t *testing.T) {
 	e.notice(t)
 }
 
+// The orchestrator stops while it holds a paused run. ReleaseAdopted forgets
+// the run, so it no longer takes the only worker slot, and a resume passes.
+func TestWorkflowStart_ResumePassesAfterAdoptedRunReleased(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	e.m.SetWorkers(1)
+	saveRun(t, e.home, 5, func(st *RunState) {
+		st.Status, st.Current, st.Ask = "paused", "ask", &Ask{Message: "Need a decision."}
+	})
+	if _, paused, ok := e.m.Adopt(5); !ok || !paused {
+		t.Fatalf("adopt: paused %v, ok %v", paused, ok)
+	}
+	saveRun(t, e.home, 6, nil)
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("resume at the limit: err = %v", err)
+	}
+	e.m.ReleaseAdopted()
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}}); err != nil {
+		t.Fatalf("resume after the orchestrator stopped: %v", err)
+	}
+	close(c.release)
+	e.notice(t)
+}
+
 // At start-up the orchestrator adopts every paused run, even more than
 // orchestrator.workers. The runs resumed by the user keep their own slots, so
 // the first runs continue and only a run past the limit is refused.
