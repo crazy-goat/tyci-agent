@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -219,6 +220,21 @@ func builtinToolsSchema() []map[string]any {
 						"maxLineLength": map[string]any{"type": "integer", "description": "Grep only — trim long lines (default: 300)"},
 					},
 					"required": []string{"pattern"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "tool_create",
+				"description": "Create a Lua tool that you can call again in this run or session. source is a complete Lua script in the .tyci/tools format: it returns a table with schema (name, description, parameters) and run(ctx, args). name must equal schema.name. The tool is registered at once; call it with the lua tool: tool(\"<name>\", {...}). It is removed when the run or session ends. Use it for a multi-step job you need several times, not for one-off work.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name":   map[string]any{"type": "string", "description": "Tool name: lowercase letters, digits and underscores. Must equal schema.name in source."},
+						"source": map[string]any{"type": "string", "description": "The Lua script, in the .tyci/tools format."},
+					},
+					"required": []string{"name", "source"},
 				},
 			},
 		},
@@ -899,7 +915,8 @@ func GetSubagentToolsSchema() []map[string]any {
 	filtered := make([]map[string]any, 0, len(schema))
 	for _, s := range schema {
 		if fn, ok := s["function"].(map[string]any); ok {
-			if name, ok := fn["name"].(string); ok && IsSubagentDenied(name) {
+			// tool_create is offered to a subagent only by a tools list that names it.
+			if name, ok := fn["name"].(string); ok && (IsSubagentDenied(name) || name == toolCreateName) {
 				continue
 			}
 		}
@@ -984,6 +1001,13 @@ func subagentToolsSchemaFor(allowed []string) []map[string]any {
 			continue
 		}
 		filtered = append(filtered, s)
+	}
+	// GetSubagentToolsSchema leaves tool_create out, so a list that names it
+	// gets it back here. See AllowedFor.
+	if slices.Contains(allowed, toolCreateName) {
+		if entry, ok := findSchemaEntryByName(GetToolsSchema(), toolCreateName); ok {
+			filtered = append(filtered, entry)
+		}
 	}
 	return filtered
 }
@@ -1135,6 +1159,7 @@ var toolRegistry = map[string]Tool{
 	"workflow_resume": &WorkflowResumeTool{},
 	"workflow_stop":   &WorkflowStopTool{},
 	"replace_agent":   &ReplaceAgentTool{},
+	"tool_create":     &ToolCreateTool{},
 }
 
 // lookupTool returns the tool registered under name, copying the interface

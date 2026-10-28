@@ -1090,6 +1090,13 @@ allowlist all still apply. `print` is rebound onto `log`.
 Separately, `.lua` files in `~/.tyci/tools/` or `./.tyci/tools/` are loaded as
 named tools of their own.
 
+The `tool_create` tool makes a Lua tool while the agent works. Its `source` is a
+script in the same format as a `.lua` file. The script is written into the run
+folder, and the tool is registered at once. Call the new tool with
+`tool("<name>", {...})` in the `lua` tool. The tool is removed when the run or
+the session ends. The main chat has `tool_create`. A workflow role has it only
+when its `tools` list names it.
+
 ## Write freshness
 
 `write` refuses to modify a file that already exists unless it was read first

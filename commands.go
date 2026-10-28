@@ -381,6 +381,19 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	}
 	cfg.Session = sess
 
+	// The Lua tools that the chat makes with tool_create live in a session
+	// folder. shutdown removes the folder when the session ends.
+	if sessionDir, endSession, err := tools.NewSessionFolder(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: session folder: %v (tool_create is off)\n", err)
+	} else {
+		ctx = tools.WithRunDir(ctx, sessionDir)
+		prevShutdown := shutdown
+		shutdown = func() {
+			prevShutdown()
+			endSession()
+		}
+	}
+
 	historyFile, _ := cmd.Flags().GetString("history-file")
 	if historyFile == "" {
 		hf, err := readline.DefaultHistoryFile()

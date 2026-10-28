@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Lua tools: the `tool_create` tool lets the main chat, and a workflow role whose `tools` list names it, create a Lua tool in the run or session folder. The tool lasts until that run or session ends (#213).
 - Memory: a workflow role keeps one private note in `~/.tyci/memory/<repo>/<role>.md`. The role writes it with `memory(scope="role")`, and the note is loaded into the system prompt of that role only. The file is outside the repository (#211).
 - Workflows: the `issue-to-merge` workflow assigns the issue to the account that runs it. The gate skips an issue that another account is assigned to, so two runs on two machines are unlikely to work on the same issue. A short check-then-assign window remains: two runs that start within seconds of each other can both assign the issue. The assignment stays after the run ends. A run of another account then skips the issue with no message. Release it with `gh issue edit <N> -R <repo> --remove-assignee <login>` (#753).
 - Workflows: the `issue-to-merge` workflow pauses at the new state `ask_protected` when the pull request changes protected paths (`.github/`, `.tyci/`, `internal/flow/checks/`). A human answers `approve` to merge the pull request through the run, or `stop` to end the run. The oracle never answers this pause, and it cannot send the run to the approved merge (#753).
