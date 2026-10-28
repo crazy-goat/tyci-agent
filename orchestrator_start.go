@@ -14,6 +14,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
+	"github.com/crazy-goat/tyci-agent/internal/forge/gitlab"
 	"github.com/crazy-goat/tyci-agent/internal/orchestrator"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
 	"github.com/crazy-goat/tyci-agent/internal/runlog"
@@ -34,10 +35,14 @@ func startOrchestrator(ctx context.Context, resumed bool, cfg orchestrator.Confi
 	return o
 }
 
-// newForge builds the forge of the config. Only "github" exists.
-func newForge(c flowconfig.Forge) (forge.Forge, error) {
+// newForge builds the forge of the config. A repos entry with forge "gitlab"
+// for forge.repo selects GitLab; everything else is GitHub.
+func newForge(c flowconfig.Forge, repos map[string]flowconfig.Repo) (forge.Forge, error) {
 	if c.Kind != "" && c.Kind != "github" {
 		return nil, fmt.Errorf("forge.kind: unknown kind %q", c.Kind)
+	}
+	if r, ok := repos[c.Repo]; ok && r.Forge == "gitlab" {
+		return gitlab.New(c.Repo, r.URL)
 	}
 	return forge.NewGitHub(c.Repo)
 }
@@ -84,7 +89,7 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string), 
 		return nil
 	}
 	oc := st.oc
-	f, err := newForge(fc.Forge)
+	f, err := newForge(fc.Forge, fc.Repos)
 	if err != nil {
 		post(orchestrator.FormatSpecial(orchestrator.ForgeError, err.Error()))
 		return nil

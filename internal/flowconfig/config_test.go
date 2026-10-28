@@ -302,3 +302,35 @@ func TestLoad_LogsRetentionDays(t *testing.T) {
 		t.Fatalf("negative: %v", err)
 	}
 }
+
+func TestLoad_Repos(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".tyci/config.json", `{"repos":{"group/sub/project":{"forge":"gitlab","url":"https://gitlab.example.com"},"o/r":{"forge":"github"}}}`)
+	c, err := Load(home, t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := c.Repos["group/sub/project"]; r.Forge != "gitlab" || r.URL != "https://gitlab.example.com" {
+		t.Fatalf("got %+v", c.Repos)
+	}
+	for _, bad := range []string{
+		`{"repos":{"g/p":{"forge":"gitlab"}}}`,
+		`{"repos":{"g/p":{"forge":"gitlab","url":"http://gitlab.example.com"}}}`,
+		`{"repos":{"g/p":{"forge":"gitea","url":"https://x.example"}}}`,
+		`{"repos":{"nonsense":{"forge":"github"}}}`,
+	} {
+		home := t.TempDir()
+		write(t, home, ".tyci/config.json", bad)
+		if _, err := Load(home, t.TempDir(), true); err == nil || !strings.Contains(err.Error(), "repos") {
+			t.Errorf("%s: got %v", bad, err)
+		}
+	}
+}
+
+func TestLoad_ReposNotInProjectFile(t *testing.T) {
+	home, proj := t.TempDir(), t.TempDir()
+	write(t, proj, ".tyci/config.json", `{"repos":{"g/p":{"forge":"gitlab","url":"https://evil.example"}}}`)
+	if _, err := Load(home, proj, true); err == nil || !strings.Contains(err.Error(), "repos") {
+		t.Fatalf("got %v", err)
+	}
+}

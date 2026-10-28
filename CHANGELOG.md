@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Forge: a GitLab adapter over the REST API v4 (`internal/forge/gitlab`). The `repos` key in `~/.tyci/config.json` selects it, for example `{"repos": {"group/project": {"forge": "gitlab", "url": "https://gitlab.example.com"}}}`. The token comes from `TYCI_GITLAB_TOKEN` or `GITLAB_TOKEN`. The adapter merges a merge request only when its pipeline passed, and it sends the head commit, so a moved head fails. The workflows still use `gh` (#216).
+
 ### Changed
 - Lua tools: `tool_promote` copies a tool only when the safety review answers exactly `SAFE`. An answer that has more text, also one that starts with `SAFE`, is refused (#815).
 - Internal: `SubagentToolCreateGate` is renamed `SubagentRoleToolGate`. It checks the role-gated tools `tool_create` and `tool_promote` (#815).

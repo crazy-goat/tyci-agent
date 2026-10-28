@@ -243,6 +243,25 @@ Orchestrator keys (section `orchestrator`; the project file wins key by key):
 
 An invalid value stops the orchestrator start and the message names the key and the file.
 
+#### GitLab repositories
+
+The orchestrator reads GitHub by default. To use a GitLab project, add it to `repos` in
+`~/.tyci/config.json` and set `forge.repo` to the same path:
+
+```json
+{
+  "forge": { "repo": "group/project" },
+  "repos": { "group/project": { "forge": "gitlab", "url": "https://gitlab.example.com" } }
+}
+```
+
+- tyci reads the token from `TYCI_GITLAB_TOKEN`, else from `GITLAB_TOKEN`. It sends the token in the `PRIVATE-TOKEN` header and never writes it to a log, an error or a transcript.
+- `url` must start with `https://`. A project file `.tyci/config.json` cannot set `repos`, because the token goes to `url`.
+- tyci uses the GitLab REST API v4. It does not use `glab`.
+- A merge request is a change, a pipeline is its check, and a project milestone is a milestone. A user with Developer access or more can write.
+- `forge.repo` `"auto"` always selects GitHub.
+- Limit: the GitLab support is not complete. The orchestrator start reads the `origin` remote and accepts only a github.com remote. The workflows (`issue-to-merge` and others) still use `gh`. Thus a run on a GitLab project does not work yet.
+
 ### Headless CLI
 
 Use the `workflow` commands to run and check a workflow from a terminal or a script. These commands do not open the chat or the TUI. They never ask for an answer.
