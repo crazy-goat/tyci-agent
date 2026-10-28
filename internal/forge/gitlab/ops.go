@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/crazy-goat/tyci-agent/internal/redact"
 )
@@ -321,14 +322,24 @@ func (g *GitLab) CILog(ctx context.Context, iid int, w io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if len(trace) > maxTrace {
-			trace = trace[len(trace)-maxTrace:]
-		}
-		if _, err := fmt.Fprintf(w, "=== job %s (stage %s) ===\n%s\n", j.Name, j.Stage, redact.Redact(string(trace))); err != nil {
+		if _, err := fmt.Fprintf(w, "=== job %s (stage %s) ===\n%s\n", j.Name, j.Stage, tail(redact.Redact(string(trace)))); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// tail is the last maxTrace bytes of s, cut at a rune start. Redact s first:
+// a cut through a token would leave a part that the patterns do not match.
+func tail(s string) string {
+	if len(s) <= maxTrace {
+		return s
+	}
+	i := len(s) - maxTrace
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++
+	}
+	return s[i:]
 }
 
 // IssueRef is gh issue list --json number,title,state,url.

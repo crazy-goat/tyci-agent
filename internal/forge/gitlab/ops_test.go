@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/crazy-goat/tyci-agent/internal/forge/gitlab"
 )
@@ -254,5 +255,36 @@ func TestGitLabSearchIssues(t *testing.T) {
 	is, err := g.SearchIssues(ctx, "race lock")
 	if err != nil || !reflect.DeepEqual(is, []gitlab.IssueRef{{Number: 3, Title: "fix lock", State: "CLOSED", URL: "u3"}}) {
 		t.Fatalf("got %+v, %v", is, err)
+	}
+}
+
+// The log is redacted before the cut: a token that crosses the cut must not
+// leave its end in the log. The cut keeps whole runes.
+func TestGitLabCILogCutAfterRedact(t *testing.T) {
+	const max = 256 << 10
+	for name, tc := range map[string]struct{ trace, absent string }{
+		"token at the cut": {"FAIL " + token + strings.Repeat("y", max-17), "0123456789"},
+		"rune at the cut":  {strings.Repeat("é", max) + "\n", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, g := newServer(t)
+			s.handle("GET merge_requests/5", func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(t, w, item{"iid": 5, "sha": shaA, "head_pipeline": item{"id": 40, "status": "failed", "sha": shaA}})
+			})
+			s.handle("GET pipelines/40/jobs", func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(t, w, []item{{"id": 41, "name": "test", "stage": "check"}})
+			})
+			s.handle("GET jobs/41/trace", func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.trace))
+			})
+			var out bytes.Buffer
+			if err := g.CILog(ctx, 5, &out); err != nil {
+				t.Fatal(err)
+			}
+			got := out.String()
+			if (tc.absent != "" && strings.Contains(got, tc.absent)) || !utf8.ValidString(got) || out.Len() > max+100 {
+				t.Fatalf("got %d bytes: %.80q", out.Len(), got)
+			}
+		})
 	}
 }
