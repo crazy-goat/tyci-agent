@@ -808,11 +808,15 @@ Each flow role also takes these keys in the flow config:
    `worktree-write`. `read-only` refuses `write`, `edit`, `bash` and `kill_job`.
    It also refuses every MCP tool. A `read-only` role does not see MCP tools in its
    schema, even when `tools` names them.
-   `worktree-write` refuses writes outside the worktree. `full` has no such limit.
+   `worktree-write` refuses `write` and `edit` outside the worktree. `full` has no such limit.
+   The limit does not cover `bash`. `bash` runs in the worktree, but it is not sandboxed.
+   A command with an absolute path or `cd` can change files outside the worktree.
+   A `worktree-write` run also gets one line in its system prompt that names the worktree
+   and says that `bash` is not sandboxed. A `read-only` or `full` run gets no such line.
 3. `roles.<name>.network`: `true` or `false`. Default: `true`. `false` removes
    the `web` tool and the MCP tools that are not listed in `tools`.
-   `bash` is not confined to the worktree, and `network: false` does not stop
-   network access from `bash`. Both change only when the OS sandbox ships (v0.11.0).
+   `network: false` does not stop network access from `bash`, because `bash` is not
+   sandboxed.
 4. `roles.<name>.tools`: the tools the role can use. Default: the tools of the
    permission. A role can only narrow the tools of the global config.
 5. `roles.<name>.limits.rounds`: the number of tool rounds. Default: `0`

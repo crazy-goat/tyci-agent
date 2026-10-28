@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 - Roles: a role with the permission `read-only` refuses every MCP tool, also when its `tools` list names it. The refusal applies to a direct call, to `tool()` in `lua` and to the tool schema. The plan steps and the read-only text runs get the same rule (#804).
+- Roles: the write root of a `worktree-write` role limits only `write` and `edit`. `bash` runs in the worktree but is not sandboxed, so a command with an absolute path or `cd` can still change files outside it. The docs now say this, and a `worktree-write` run gets a system prompt line that names its worktree and this limit (#790).
 
 ## [0.11.0] - 2026-10-28
 
