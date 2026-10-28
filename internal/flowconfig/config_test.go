@@ -179,7 +179,7 @@ func TestLoad_PromptFileRejected(t *testing.T) {
 
 func TestRole_Undefined(t *testing.T) {
 	c, _ := Load(t.TempDir(), t.TempDir(), true)
-	if _, err := c.Role("planner"); err == nil || !strings.Contains(err.Error(), "planner") {
+	if _, err := c.Role("auditor"); err == nil || !strings.Contains(err.Error(), "auditor") {
 		t.Fatalf("got %v", err)
 	}
 }
