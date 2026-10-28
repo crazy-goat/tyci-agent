@@ -237,7 +237,9 @@ type RunContext struct {
 	// write report.md there. Empty when the runner has no run dir.
 	ArtifactDir string
 	// RunSoFar lists the steps since the last visit of this state (all steps
-	// on the first visit) with their artifact files.
+	// on the first visit) with their artifact files. The last visit of this
+	// state is listed too when it failed. A failed step has an "error:" line
+	// under it, masked and cut to 2000 bytes.
 	RunSoFar string
 	// Failed, FailedKey and FailedDir name the last check step, its key and its
 	// absolute artifact dir. Set only for the fixer and oracle roles (#369).
