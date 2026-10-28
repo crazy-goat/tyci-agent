@@ -770,7 +770,7 @@ func TestWorkflowStart_ResumeRefusedAtWorkersLimit(t *testing.T) {
 	}
 	st := saveRun(t, e.home, 6, nil)
 	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}})
-	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "orchestrator.workers is 1") {
+	if !errors.Is(err, ErrNoSlot) || !strings.Contains(err.Error(), "orchestrator.workers is 1") {
 		t.Fatalf("err = %v", err)
 	}
 	if got := loadRunState(t, e.home, st.Run); got.Resumed != 0 || got.Status != "running" {
@@ -798,7 +798,7 @@ func TestWorkflowStart_ResumeCountsHeldPausedRun(t *testing.T) {
 	}
 	st := saveRun(t, e.home, 6, nil)
 	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}})
-	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "orchestrator.workers is 2") {
+	if !errors.Is(err, ErrNoSlot) || !strings.Contains(err.Error(), "orchestrator.workers is 2") {
 		t.Fatalf("err = %v", err)
 	}
 	if got := loadRunState(t, e.home, st.Run); got.Resumed != 0 || got.Status != "running" {
@@ -821,7 +821,7 @@ func TestWorkflowStart_ResumePassesAfterAdoptedRunReleased(t *testing.T) {
 		t.Fatalf("adopt: paused %v, ok %v", paused, ok)
 	}
 	saveRun(t, e.home, 6, nil)
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}}); !errors.Is(err, ErrBusy) {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}}); !errors.Is(err, ErrNoSlot) {
 		t.Fatalf("resume at the limit: err = %v", err)
 	}
 	e.m.ReleaseAdopted()

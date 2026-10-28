@@ -407,11 +407,14 @@ func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool,
 		if st.Issue != issue {
 			continue
 		}
-		if workers, others := m.limit(); workers > 0 && m.slotsInUse(info, st.Run)+others >= workers {
+		workers, others, unlockPool := m.reserve()
+		if inUse := m.slotsInUse(info, st.Run) + others; workers > 0 && inUse >= workers {
+			unlockPool()
 			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d worker slot(s) are in use (active runs, also in other repositories, paused runs held by the orchestrator, and an apply or reject of a workflow proposal)",
-				ErrBusy, ShowRunID(st.Run), issue, workers, m.slotsInUse(info, st.Run)+others)
+				ErrNoSlot, ShowRunID(st.Run), issue, workers, inUse)
 		}
 		ok, err := m.resumeRun(info, st)
+		unlockPool()
 		if err != nil {
 			return "", true, err
 		}

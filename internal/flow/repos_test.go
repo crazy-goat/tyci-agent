@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestChatParsesQualifiedIssueRef(t *testing.T) {
@@ -67,7 +68,7 @@ func TestStartRefusedOverWorkerLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"2"}})
-	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "orchestrator.workers is 1") || !strings.Contains(err.Error(), "workflow_stop") {
+	if !errors.Is(err, ErrNoSlot) || !strings.Contains(err.Error(), "orchestrator.workers is 1") || !strings.Contains(err.Error(), "workflow_stop") {
 		t.Fatalf("err = %v, want the worker limit refusal", err)
 	}
 	close(c.release)
@@ -106,7 +107,7 @@ func TestTwoReposShareWorkers(t *testing.T) {
 	if err != nil || !strings.HasPrefix(idB, "x/r#") {
 		t.Fatalf("start in x/r: %q, %v", idB, err)
 	}
-	if _, _, err := rs.Start(ctx, "", "demo", []string{"o/r#3"}); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "2 run(s) are active") {
+	if _, _, err := rs.Start(ctx, "", "demo", []string{"o/r#3"}); !errors.Is(err, ErrNoSlot) || !strings.Contains(err.Error(), "2 run(s) are active") {
 		t.Fatalf("third run over the shared limit: err = %v", err)
 	}
 	// The test env saves runs under the key "r", so check the routing of a
@@ -128,6 +129,54 @@ func TestTwoReposShareWorkers(t *testing.T) {
 	b.notice(t)
 	waitIdle(t, a.m)
 	waitIdle(t, b.m)
+}
+
+// TestSharedLimitIsAtomicAcrossRepos starts one run in each of two repos at the
+// same time, with one free worker slot. Exactly one start must pass.
+func TestSharedLimitIsAtomicAcrossRepos(t *testing.T) {
+	for range 20 {
+		ca := &gatedChecks{release: make(chan struct{}), key: "ok"}
+		cb := &gatedChecks{release: make(chan struct{}), key: "ok"}
+		a, b := newMgrEnv(t, ca), newMgrEnv(t, cb)
+		pool := &Pool{}
+		pool.Join(a.m)
+		pool.Join(b.m)
+		a.m.SetWorkers(1)
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		for _, e := range []*mgrEnv{a, b} {
+			go func() {
+				<-start
+				_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
+				errs <- err
+			}()
+		}
+		close(start)
+		ok, noSlot := 0, 0
+		for range 2 {
+			switch err := <-errs; {
+			case err == nil:
+				ok++
+			case errors.Is(err, ErrNoSlot):
+				noSlot++
+			default:
+				t.Fatal(err)
+			}
+		}
+		if ok != 1 || noSlot != 1 {
+			t.Fatalf("%d starts passed and %d were refused; want 1 and 1", ok, noSlot)
+		}
+		close(ca.release)
+		close(cb.release)
+		select { // the end notice of the one started run
+		case <-a.notices:
+		case <-b.notices:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no notice")
+		}
+		waitIdle(t, a.m)
+		waitIdle(t, b.m)
+	}
 }
 
 func TestOpenRepoReadsRegistryPath(t *testing.T) {

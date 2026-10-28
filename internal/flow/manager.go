@@ -224,10 +224,9 @@ func (p *Pool) Join(m *Manager) {
 	m.mu.Unlock()
 }
 
-// others returns the active runs of the pool members other than m.
-func (p *Pool) others(m *Manager) int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// othersLocked returns the active runs of the pool members other than m.
+// p.mu must be held.
+func (p *Pool) othersLocked(m *Manager) int {
 	n := 0
 	for _, o := range p.members {
 		if o != m {
@@ -241,13 +240,17 @@ func (p *Pool) others(m *Manager) int {
 // entries. m.mu must be held.
 func (m *Manager) countActive() { m.count.Store(int32(len(m.active))) }
 
-// limit returns the worker limit (0 = unlimited) and the active runs of the
-// other repos that share it. m.mu must be held.
-func (m *Manager) limit() (workers, others int) {
+// reserve returns the worker limit (0 = unlimited) and the active runs of the
+// other repos that share it. It locks the pool until unlock: the caller checks
+// the limit and inserts its run into m.active before unlock, so the check and
+// the reservation are one step for the whole pool. m.mu must be held (the lock
+// order is m.mu, then pool.mu).
+func (m *Manager) reserve() (workers, others int, unlock func()) {
 	if m.pool == nil {
-		return m.workers, 0
+		return m.workers, 0, func() {}
 	}
-	return int(m.pool.workers.Load()), m.pool.others(m)
+	m.pool.mu.Lock()
+	return int(m.pool.workers.Load()), m.pool.othersLocked(m), m.pool.mu.Unlock
 }
 
 // StartIssue starts workflow for issue. The issue goes to the param named "issue",
@@ -315,10 +318,12 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 			return id, nil, err
 		}
 	}
-	if workers, others := m.limit(); workers > 0 && len(m.active)+others >= workers {
+	workers, others, unlockPool := m.reserve()
+	if workers > 0 && len(m.active)+others >= workers {
+		unlockPool()
 		m.mu.Unlock()
 		return "", nil, fmt.Errorf("%w: orchestrator.workers is %d and %d run(s) are active, also in other repositories; wait until a run ends (workflow_status), or stop one (workflow_stop), then start again",
-			ErrBusy, workers, len(m.active)+others)
+			ErrNoSlot, workers, len(m.active)+others)
 	}
 	key := fmt.Sprintf("%s%d", preparingPrefix, issue)
 	if issue == 0 {
@@ -330,6 +335,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 	}
 	m.active[key] = activeRun{cancel: cancel, issue: issue}
 	m.countActive()
+	unlockPool()
 	m.mu.Unlock()
 
 	st, wf, warnings, err := m.Prepare(prepCtx, info, req)
@@ -347,6 +353,11 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 
 // ErrBusy is returned (wrapped) when a run is already active.
 var ErrBusy = errors.New("manager busy")
+
+// ErrNoSlot is returned (wrapped) when orchestrator.workers runs are active, in
+// this repository and the other repositories of the Pool. It is not ErrBusy: the
+// issue has no run, so a caller can try again when a run ends.
+var ErrNoSlot = errors.New("no free worker slot")
 
 // refuse returns an ErrBusy error when the issue has an active, preparing or paused
 // run, or a running run owned by another live process (another tyci). A running state
@@ -592,13 +603,15 @@ func (m *Manager) Resume(runID, answer string) error {
 	// runs are not counted here: at start-up the orchestrator holds all of them, and
 	// the run being resumed already holds its own slot.
 	startup := saved != "" && answer == "goto "+saved
-	workers, others := m.limit()
+	workers, others, unlockPool := m.reserve()
 	if startup && workers > 0 && len(m.active)+others >= workers {
+		unlockPool()
 		m.mu.Unlock()
-		return fmt.Errorf("run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active (an apply or reject of a workflow proposal counts as an active run); answer resume again when one ends",
-			ShowRunID(st.Run), st.Issue, workers, len(m.active)+others)
+		return fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active (an apply or reject of a workflow proposal counts as an active run); answer resume again when one ends",
+			ErrNoSlot, ShowRunID(st.Run), st.Issue, workers, len(m.active)+others)
 	}
 	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
+	unlockPool()
 	if startup {
 		m.markAdoptable(st.Run)
 	}
