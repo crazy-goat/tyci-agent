@@ -79,6 +79,25 @@ Set `GITHUB_TOKEN` or `GH_TOKEN` to avoid the GitHub API rate limit. Restart
 
 `workflow_start` needs the workflow name, `workflow`, and the positional values of the workflow, `params`, a list of strings. For example: `{"workflow": "issue-to-merge", "params": ["160"]}`. The tool description lists the workflows of the project and of `~/.tyci/workflows/` with their params, as they were at session start. A workflow added later is not in that list. When you ask for a name that is not in it, the tool checks the current workflows and the error lists them. A missing required param makes the model ask you for it. When the model starts a run, the chat shows a line such as `model started /issue-to-merge 160`.
 
+#### More than one repository in one session
+
+The chat can start and watch runs in more than one repository. The open repositories are the repository of the current directory and each repository in `repos` of `~/.tyci/config.json` that has a `path`:
+
+```json
+{
+  "repos": {
+    "acme/api": { "path": "/home/user/work/api" },
+    "group/sub/web": { "forge": "gitlab", "url": "https://gitlab.example.com", "path": "/home/user/work/web" }
+  }
+}
+```
+
+- `path` must be an absolute path to a local clone. The `origin` remote of the clone must be the repository of the key. If not, the repository does not open and the error says why.
+- Name the repository with `owner/name#N`, for example `acme/api#12`. `workflow_start` also accepts the argument `repo`. A bare `#12` is accepted only when one repository is open. With more open repositories, a bare ref is refused as ambiguous.
+- Run ids follow the same rule. With more open repositories, `workflow_start` returns a run id such as `acme/api#17`, and `workflow_list` returns one page for each repository.
+- Each repository has its own run dir and its own worktrees. All repositories share one `orchestrator.workers` limit.
+- Known limit: project-local hooks, Lua tools, the local cron dir and `mcp.json` come only from the repository of the current directory. The orchestrator works only in that repository too.
+
 A run can be stopped. The model calls `workflow_stop`. You type `/stop <run> [reason]` in the chat. On the Runs tab, you select a running run, press `x`, then `y`. These stop a run of the current tyci session. `tyci workflow stop <run-id>` stops a run that no live tyci process owns. A stopped run gets the status `stopped`. It keeps its worktree and its pull request, and it cannot be resumed.
 
 The orchestrator can replace a stuck agent. The model calls `replace_agent` with `agent_id` (`<run>/<role>`, for example `run-7/worker`), the `role` of the new agent and a `reason`. The old agent is cancelled first and must stop within 10 s. If it does not stop in time, the call fails and no new agent starts. The old agent was already cancelled, so its step ends as `error` and the state takes its `error` route, or the run fails. If the old agent stops in time, the new agent runs in the same worktree and state visit, and it gets a summary of the old agent's work. Only one replacement is allowed per state visit. The replacement is saved as `replaced` in the run's `state.json`. A subagent cannot call `replace_agent`.
@@ -93,12 +112,12 @@ The optional workflow `fix-ci` repairs a red default branch. Run `tyci workflow 
 The optional workflow `dependency-bump` updates the Go dependencies. Run `tyci workflow init dependency-bump` to use it. It commits the go.mod and go.sum changes, verifies them, waits for CI and shows the diff in the chat. It merges only after a human `yes`; a `no` ends the run without a merge. It has no params, for example `workflow_start dependency-bump`.
 
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
-- Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
+- Worktrees: `~/.tyci/worktrees/<owner+name>/issue-N`. `<owner+name>` is the full repository path with `+` in place of `/`, for example `crazy-goat+tyci-agent`. A worktree from an older tyci stays in `~/.tyci/worktrees/<name>/`.
 - Project files in a worktree: tyci reads each `.tyci` file from the worktree first. If the worktree does not have the file, tyci reads it from the main checkout. The trust answer of the main checkout applies to the worktree. A subagent in a worktree reads the agents, skills, `AGENTS.md` and memory of the project in the same way. A memory note that the worktree does not override is written to the main checkout.
 - Setup script: if the file `bin/worktree-setup.sh` in the repository is executable and the project is trusted, tyci runs it once in the new worktree. In an untrusted project tyci creates the worktree and skips the script. If the script fails or the run is cancelled, the run stops and tyci removes the worktree and its branch.
-- Run state: `~/.tyci/runs/<repo>/<run>/state.json`
+- Run state: `~/.tyci/runs/<owner+name>/<run>/state.json`. Two repositories with the same name, for example `acme/demo` and `other/demo`, get different run dirs (#846). tyci does not move the runs of an older tyci from `~/.tyci/runs/<name>/`. It still reads them when their `repo` field is the current repository. A new run number starts above the numbers of these old runs.
 - Run usage: agent steps in `state.json` carry `stats` (tokens, cost, turns); `workflow_status` and the Runs tab show it
-- Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`, agents must write `report.md`)
+- Run artifacts: `~/.tyci/runs/<owner+name>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`, agents must write `report.md`)
 - Workflows: `.tyci/workflows/<name>/` of a trusted project, then `~/.tyci/workflows/<name>/`. The first directory that exists is used. Each directory holds `workflow.json`, `checks/`, `tasks/` and `prompts/`. Check scripts, task templates and `@file` prompts are read only from that directory. There is no built-in workflow at run time.
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
@@ -109,7 +128,7 @@ It pauses every `running` run of the current repository whose owner process is g
 saved state in the same worktree), `stop`, or nothing: a run without an answer stays paused.
 A paused run blocks a new run for its issue. The orchestrator watches the paused runs (they
 count as workers) and sees how each one ends after the answer, so it never starts a second run
-for the issue. An answer `resume` is refused while `orchestrator.workers` runs are active. The notice
+for the issue. An answer `resume` is refused while `orchestrator.workers` runs are active. A `workflow_start` is also refused while `orchestrator.workers` runs are active. The error gives the number of active runs, and tells you to wait for a run (`workflow_status`) or to stop one (`workflow_stop`). The notice
 names the limit. An apply or reject of a workflow proposal counts as an active run, so it takes a worker slot too. The run stays paused until you answer again. A run that cannot pause (its workflow has no `ask` state) fails, and the chat
 shows a notice for it. With no unfinished runs, start-up does not ask. A `workflow_start` of an issue whose `running` run has
 a dead owner (another tyci process stopped) still resumes it. The resumed run counts as a worker. When `orchestrator.workers` runs are active, the start is refused and the run stays stale. A `workflow_start` of an issue whose `running` run has a live owner (another tyci process) is refused. A run resumed 3 times, or a run whose worktree is gone, pauses for an answer.
@@ -219,7 +238,7 @@ patch is cut; `patch_file` is the path of the full patch that `apply` uses). Ans
   `.tyci/workflows/<name>/` files.
   When `gh pr create` fails, tyci deletes the pushed branch, so you can try again.
 - `reject`: nothing changes; the proposal is recorded in
-  `~/.tyci/runs/<repo>/rejected-proposals` and is not shown again.
+  `~/.tyci/runs/<owner+name>/rejected-proposals` and is not shown again.
 
 The run stays paused after either answer and waits for its normal answer.
 
@@ -323,7 +342,8 @@ A run has a number that counts up for each repository: `#1`, `#2`, and so on. Ru
 | `ci_failure` | The newest completed CI run on the default branch failed. | `fix-ci` |
 | `cron` | A job in `cron.json` is due. The daemon does a cron tick every minute. | the cron job |
 
-- The `issue` and `ci_failure` triggers watch only the repositories in `daemon.repos`. Today the daemon watches only the repository of `--dir`, and only if `daemon.repos` lists it. Without repositories, the daemon runs the cron trigger only.
+- The `issue` and `ci_failure` triggers watch only the repositories in `daemon.repos`. The repository of `--dir` needs only its name in this list. Each other repository also needs `repos.<owner/name>.path` in `~/.tyci/config.json` (see "More than one repository in one session"). The daemon writes a log line for each repository that it cannot open, and skips it. Without repositories, the daemon runs the cron trigger only.
+- Project-local hooks, Lua tools, the local cron dir and `mcp.json` come only from the repository of `--dir`. This is a known limit.
 - The `ci_failure` trigger reads the CI workflow `TYCI_CI_WORKFLOW`. The default is `tests.yaml`, the same as `ci_failure.sh`. A cancelled, skipped or neutral CI run does not count.
 - The daemon keeps no database. A run file in `~/.tyci/runs/` stops a second run for the same issue. This is also true after a restart.
 - A `fix-ci` run that the daemon starts keeps the head SHA of the red CI run in its run file (`trigger`). The daemon starts only one `fix-ci` run for a SHA, also when CI runs again on the same SHA and also after a restart.
@@ -472,7 +492,7 @@ Press Enter on a subagent in the Subagents list to open its conversation. Text y
 ## Run transcripts
 
 Every agent visit of a flow run writes its messages to
-`~/.tyci/runs/<repo>/<run>/agents/NNN-<role>.jsonl` (session JSONL format,
+`~/.tyci/runs/<owner+name>/<run>/agents/NNN-<role>.jsonl` (session JSONL format,
 file mode 0600) and a `.md` dump with the same base name (mode 0644, built from the redacted events). `NNN` is `agent_seq` from `state.json`. A resumed run starts a
 new file; old files are never appended to.
 
@@ -501,7 +521,7 @@ runs. A negative value is a config error.
 ├── tui-state.json      # TUI UI state, e.g. the sidebar width (written by the TUI)
 ├── debug/              # Debug logs (when --no-debug is not set)
 ├── sessions/           # Auto-generated session files (JSONL)
-└── worktrees/          # Fixed-path issue worktrees (<repo>/issue-N)
+└── worktrees/          # Fixed-path issue worktrees (<owner+name>/issue-N)
 ```
 
 ## CLI Reference
