@@ -323,6 +323,8 @@ roadmap run has no artifact dir and writes no report.
   with agent `review` and no task, whatever its name. The runner gives the artifact dir in
   `TYCI_REVIEW_DIR`.
 
+An oracle state with `"saves": true` saves its answer as `output.txt` in its artifact dir, and the state writes no `report.md`. The runner gives the path of the newest saved answer of the run in `TYCI_ANSWER`, so a check does not depend on the state name. Without the flag, the tasks `pick_critical`, `rebalance_split` and `plan` save their answer.
+
 New PR comments from team members (write or admin permission) go to `comments.md` in the artifact
 dir of the `comments` step; the next `code` visit sees the file in "Run so far".
 `fetch_comments.sh` also writes `last_comment_id` and `last_review_comment_id` in the run

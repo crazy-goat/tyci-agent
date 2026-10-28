@@ -56,6 +56,10 @@ type State struct {
 	// Guard means the state needs a human before an oracle may send the run
 	// here (#562). See isGuarded.
 	Guard bool `json:"guard,omitempty"`
+	// Saves means the oracle answer of this agent state is the text of the next state:
+	// the runner saves it as output.txt and the state writes no report.md (#784).
+	// See savesAnswer.
+	Saves bool `json:"saves,omitempty"`
 	End   bool `json:"end,omitempty"`
 	// Result is the outcome of an end state, for example "merged" or "declined".
 	// Only an end state may set it. An empty Result ends the run as "done".
@@ -250,6 +254,8 @@ type RunContext struct {
 	Pause, Goto string
 	// Stats is filled by the agent runner when the agent ends. Nil: not wanted.
 	Stats *StepStats
+	// Saves is the State.Saves of the agent state (see savesAnswer). Only an oracle answer is saved.
+	Saves bool
 	// PlanRejects is the number of REJECT answers of the plan review since the last human
 	// answer, not counting this one (see planReviewKey).
 	PlanRejects int

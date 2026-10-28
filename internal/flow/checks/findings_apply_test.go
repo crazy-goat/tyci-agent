@@ -135,3 +135,29 @@ func TestCheckScripts_JoinConvertsNumbers(t *testing.T) {
 		}
 	}
 }
+
+// #784: TYCI_ANSWER names the pick answer, so a state with another name works.
+func TestFindingsApply_AnswerFromEnvWithRenamedState(t *testing.T) {
+	dir := setupApply(t, `{"critical":[1],"doubt":[]}`, "")
+	if err := os.Rename(filepath.Join(dir, "artifacts", "001-pick"), filepath.Join(dir, "artifacts", "001-choose")); err != nil {
+		t.Fatal(err)
+	}
+	logPath := testutil.StubGH(t, applyGh)
+	answer := filepath.Join(dir, "artifacts", "001-choose", "output.txt")
+	env := map[string]string{"TYCI_REPO": "o/r", "TYCI_RUN_DIR": dir, "TYCI_PARAM_MILESTONE": "v1", "TYCI_ANSWER": answer}
+	key, exit, _ := testutil.RunCheck(t, "findings_apply.sh", env)
+	b, _ := os.ReadFile(logPath)
+	if exit != 0 || key != "done" || !strings.Contains(string(b), "issue edit 1 -R o/r --milestone v1") {
+		t.Fatalf("exit=%d key=%q log=%q", exit, key, b)
+	}
+}
+
+// #784: a TYCI_ANSWER with no file is a failed answer, even when a pick answer exists in the glob.
+func TestFindingsApply_AnswerMissingFileFails(t *testing.T) {
+	dir := setupApply(t, `{"critical":[1],"doubt":[]}`, "")
+	env := map[string]string{"TYCI_REPO": "o/r", "TYCI_RUN_DIR": dir, "TYCI_PARAM_MILESTONE": "v1", "TYCI_ANSWER": filepath.Join(dir, "artifacts", "009-x", "output.txt")}
+	key, exit, _ := testutil.RunCheck(t, "findings_apply.sh", env)
+	if exit != 0 || key != "fail" {
+		t.Fatalf("exit=%d key=%q", exit, key)
+	}
+}
