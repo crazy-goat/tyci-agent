@@ -73,11 +73,15 @@ var agentRunInfo = func() (flow.RepoInfo, error) { return workflowManager.Info()
 
 // agentRunWorkdir refuses a resume of an agent that belongs to a workflow run
 // which is not done or paused. It returns the worktree of that run, so the
-// resumed agent works in the same files. An agent of no run returns "". A
+// resumed agent works in the same files. A planner job is refused, because its
+// worktree may be gone when it ends (see plancmd.go). An agent of no run returns "". A
 // resumed job belongs to the run of the agent it continues (see
 // runIDsOf). The worktree of a merged or skipped run is removed; a resume
 // then would work in the main checkout, so it is refused too.
 func agentRunWorkdir(jobID string) (string, error) {
+	if isPlannerJob(jobID) {
+		return "", errPlannerNotResumable
+	}
 	info, err := agentRunInfo()
 	if err != nil {
 		// Without repository info no workflow run can start in this
