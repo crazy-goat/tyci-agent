@@ -148,6 +148,9 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		name = rc.Run + "/" + role
 	}
 	policy := rolePolicy(role, rl, rc.Worktree)
+	if rc.ReadOnly {
+		policy.Permission = tools.PermissionReadOnly
+	}
 	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl), Policy: &policy, Fallbacks: fallbacks, RoleLimits: rl.Limits.Rounds > 0 || rl.Limits.TimeMin > 0 || rl.Limits.ToolCalls > 0}
 	effective := spec.Effort
 	if r.URIEffort != nil {
