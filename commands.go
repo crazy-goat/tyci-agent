@@ -68,9 +68,12 @@ func init() {
 	rootCmd.PersistentFlags().String("history-file", "", "Path to history file (default: ~/.tyci/history)")
 	rootCmd.PersistentFlags().String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
 	rootCmd.PersistentFlags().Bool("no-session", false, "Disable session persistence")
-	rootCmd.PersistentFlags().Bool("debug", false, "Show HTTP request/response data")
+	rootCmd.PersistentFlags().Bool("debug", false, "Deprecated, has no effect")
 	rootCmd.PersistentFlags().Bool("no-debug", false, "Disable API request/response debug logging")
 	rootCmd.PersistentFlags().Bool("no-mcp", false, "Don't connect configured MCP servers (~/.tyci/mcp.json)")
+	// --debug stays accepted so that old scripts do not fail with "unknown flag".
+	// The debug log is always on, so the flag does nothing.
+	_ = rootCmd.PersistentFlags().MarkDeprecated("debug", "it has no effect; the debug log in ~/.tyci/debug/ is always on, use --no-debug to turn it off")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(tuiCmd)
@@ -208,6 +211,17 @@ func openDebugLog(cmd *cobra.Command, ctx context.Context) (context.Context, *de
 	return debug.NewContext(ctx, dl), dl
 }
 
+// closeDebugLog closes the debug log. A nil log does nothing. A failed close
+// only prints a warning.
+func closeDebugLog(dl *debug.Logger) {
+	if dl == nil {
+		return
+	}
+	if err := dl.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
+	}
+}
+
 // toolsAdapter implements the tools.Runner interface by delegating to tools.RunTool.
 type toolsAdapter struct{}
 
@@ -319,7 +333,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	ctx, shutdown := setupProjectLocalEnv(ctx, wd, trusted, connectMCP, noMCP)
 	rememberProjectSetup(wd, trusted, connectMCP && !noMCP)
 
-	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	// The flag wins when given, otherwise the global config, otherwise 0 —
 	// which each connector reads as "your default".
@@ -332,7 +345,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		Dispatch:           agent.NewDispatcher(appBus, orchestratorAddr, agent.LoadTyciConfig().ToolsSettings()),
 		MaxRetries:         maxRetries,
 		MaxIterations:      maxIterations,
-		Debug:              debugFlag,
 		Tools:              toolsAdapter{},
 		SchemaFunc:         tools.GetTopLevelToolsSchemaJSON,
 		MaxTokens:          maxTokens,
@@ -476,11 +488,7 @@ var runCmd = &cobra.Command{
 		// debug log's Close() on the failed and canceled paths too.
 		cleanup := func() {
 			dropLeftoverNotices(os.Stderr)
-			if dl != nil {
-				if err := dl.Close(); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
-				}
-			}
+			closeDebugLog(dl)
 			shutdown()
 		}
 		defer cleanup()
@@ -522,13 +530,7 @@ var tuiCmd = &cobra.Command{
 			return err
 		}
 		defer shutdown()
-		if dl != nil {
-			defer func() {
-				if err := dl.Close(); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
-				}
-			}()
-		}
+		defer closeDebugLog(dl)
 
 		// Compute context counts for the top status bar.
 		toolsCount := len(tools.GetAllToolsSchema())

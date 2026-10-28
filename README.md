@@ -135,6 +135,8 @@ Each oracle answer is a history step in `state.json` and a notice, for example `
 
 The oracle reads the task file `tasks/ask.md` of the workflow. `tyci workflow init` copies it when the template has an `ask` state. A workflow with an `ask` state that does not set `"human": true` needs this file, unless `defaults.oracle_answers` is `0`. `tyci workflow validate` reports the file when it is missing.
 
+An oracle state with `"saves": true` saves its answer as `output.txt` in its artifact dir, and the state writes no `report.md`. The next state reads the answer. The builtin `milestone-close` and `rebalance` templates set this flag. A workflow with no `saves` flag saves the answer of the tasks `pick_critical`, `rebalance_split` and `plan`. A check reads the path of the newest saved answer from `TYCI_ANSWER`.
+
 The oracle never answers these pauses. A human answers them:
 
 - a pause at an ask state with `"human": true`,
@@ -452,8 +454,9 @@ These flags work with `run` and `tui`:
 | `--history-file` | `""` | Path to history file (default: `~/.tyci/history`) |
 | `--session` | `""` | Session file path (default: auto-generated in `~/.tyci/sessions/`) |
 | `--no-session` | `false` | Disable session persistence |
-| `--debug` | `false` | Show HTTP request/response data |
 | `--no-debug` | `false` | Disable API request/response debug logging |
+
+The debug log is on by default. It is written to `~/.tyci/debug/`. Use `--no-debug` to turn it off.
 
 ### `run` flags
 

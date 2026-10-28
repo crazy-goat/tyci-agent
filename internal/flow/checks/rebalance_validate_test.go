@@ -145,3 +145,20 @@ func TestRebalanceValidate_NoAnswerFails(t *testing.T) {
 		t.Fatalf("key=%q", key)
 	}
 }
+
+// #784: TYCI_ANSWER names the split answer, so a state with another name works.
+func TestRebalanceValidate_AnswerFromEnvWithRenamedState(t *testing.T) {
+	dir := setupValidate(t, `{"assign":{"v0.10.0":[1,2]},"create":[]}`)
+	if err := os.Rename(filepath.Join(dir, "artifacts", "001-split"), filepath.Join(dir, "artifacts", "001-propose")); err != nil {
+		t.Fatal(err)
+	}
+	answer := filepath.Join(dir, "artifacts", "001-propose", "output.txt")
+	key, exit, _ := testutil.RunCheck(t, "rebalance_validate.sh", map[string]string{"TYCI_REPO": "o/r", "TYCI_RUN_DIR": dir, "TYCI_ANSWER": answer})
+	if exit != 0 || key != "ok" {
+		t.Fatalf("exit=%d key=%q", exit, key)
+	}
+	// Without the variable the glob finds no split step, so the check fails.
+	if key, _, _ := testutil.RunCheck(t, "rebalance_validate.sh", map[string]string{"TYCI_REPO": "o/r", "TYCI_RUN_DIR": dir}); key != "fail" {
+		t.Fatalf("without TYCI_ANSWER key=%q, want fail", key)
+	}
+}
