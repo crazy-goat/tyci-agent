@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: a retried worker gets the error of the failed step in its task text, under "Run so far". The error is masked and cut to 2000 bytes (#445).
 - CLI: `tyci run` prints the max-iterations warning on stderr, not stdout (#466).
 - Flow: start-up does not pause a run that another tyci process resumes at the same time (#432).
+- Flow: the `milestone-close` apply step joins the doubtful issue numbers after it converts them to text, so jq 1.5 no longer fails and exits without a key (#741).
+- Orchestrator: when `milestone-close` does not start, the notice says how to install it, with `tyci workflow init milestone-close`. The hint is added after the cut error text, so a long error does not hide it (#741).
+- Agent: a job or run notice no longer resets the end-of-turn job reminder budget. Only a real user message resets it. The todo reminder budget follows the same rule (#484).
+- CLI: `tyci workflow run` writes the debug log to `~/.tyci/debug/`, and `--no-debug` turns it off (#515).
+- Subagents: `wait`, `wait` with ids and background `bash` use the same subagent rule as `kill_job` (#724).
+- Workflows: the `release` workflow question tells the human to answer `goto tag` after the CHANGELOG pull request is merged, and `goto wait` if the release tag is already on origin. It also says that `retry` at that point runs the worker on an empty `[Unreleased]` (#739).
+- Workflows: a role agent that is resumed to write its `report.md` keeps its tool policy. Its `write` and `edit` refuse paths outside the run worktree, as in the first visit (#446).
+- Workflows: the `rebalance` workflow shows the reason why the proposal is not valid when the split pauses after three invalid proposals. The ask text no longer says that a proposal is shown below in that case, and it says to answer `yes` only for a valid proposal (#740).
 - Flow: the orchestrator releases its paused runs when it stops. They no longer take a worker slot, so a resume of another run is not refused at `orchestrator.workers` (#731).
 
 ## [0.10.0] - 2026-10-14

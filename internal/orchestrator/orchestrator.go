@@ -204,7 +204,9 @@ func (o *Orchestrator) startClose(ctx context.Context, milestone string) {
 	h, err := o.r.Start(ctx, CloseWorkflow, nil, []string{milestone})
 	if err != nil {
 		o.endClose(milestone)
-		o.notify(fmt.Sprintf("%s did not start for milestone %s: %s", CloseWorkflow, sanitize(milestone, maxTitle), sanitize(err.Error(), maxReason)))
+		// The hint follows the cut reason: a long "not found" error would lose it.
+		o.notify(fmt.Sprintf("%s did not start for milestone %s: %s. If the workflow is missing, run \"tyci workflow init %s\" to install it.",
+			CloseWorkflow, sanitize(milestone, maxTitle), sanitize(err.Error(), maxReason), CloseWorkflow))
 		return
 	}
 	o.notify(fmt.Sprintf("Started %s for milestone %s.", CloseWorkflow, sanitize(milestone, maxTitle)))

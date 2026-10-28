@@ -147,7 +147,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Run != "" {
 		name = rc.Run + "/" + role
 	}
-	policy := tools.Policy{Role: role, Permission: rl.PermissionMode(), Network: rl.NetworkOn(), Tools: rl.Tools, Dir: rc.Worktree}
+	policy := rolePolicy(role, rl, rc.Worktree)
 	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl), Policy: &policy, Fallbacks: fallbacks, RoleLimits: rl.Limits.Rounds > 0 || rl.Limits.TimeMin > 0 || rl.Limits.ToolCalls > 0}
 	effective := spec.Effort
 	if r.URIEffort != nil {
@@ -225,6 +225,12 @@ func hasReport(rc RunContext) bool {
 	return err == nil && len(bytes.TrimSpace(b)) > 0
 }
 
+// rolePolicy is the tool policy of a run of role in the worktree dir. A run
+// and its reminders get the same policy.
+func rolePolicy(role string, rl flowconfig.Role, dir string) tools.Policy {
+	return tools.Policy{Role: role, Permission: rl.PermissionMode(), Network: rl.NetworkOn(), Tools: rl.Tools, Dir: dir}
+}
+
 // ensureReport checks that the agent wrote a non-empty report.md. If not, it
 // sends a reminder in the same session, at most maxReminders times. It
 // returns the session id of the last message.
@@ -232,6 +238,11 @@ func (r *SubagentRunner) ensureReport(ctx context.Context, role, session string,
 	if rc.ArtifactDir == "" {
 		return session, nil
 	}
+	rl, err := r.Cfg.Role(role)
+	if err != nil {
+		return session, err
+	}
+	policy := rolePolicy(role, rl, rc.Worktree)
 	for i := 0; ; i++ {
 		if hasReport(rc) {
 			return session, nil
@@ -240,7 +251,7 @@ func (r *SubagentRunner) ensureReport(ctx context.Context, role, session string,
 			return session, fmt.Errorf("%w from %s", ErrNoArtifact, role)
 		}
 		msg := "You did not leave your artifact at " + reportPath(rc) + ". Write it now."
-		_, next, err := r.Spawn(ctx, tools.TaskSpec{Task: msg, Resume: session, Dir: rc.Worktree})
+		_, next, err := r.Spawn(ctx, tools.TaskSpec{Task: msg, Resume: session, Dir: rc.Worktree, Policy: &policy})
 		if err != nil {
 			return session, err
 		}

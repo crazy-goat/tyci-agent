@@ -275,7 +275,7 @@ func depthOnlyCtx(jobID string) context.Context {
 
 // TestKillJob_DepthWithoutSinkRefusesUnrelatedTarget: a child at depth above 0
 // that lost the sink key is refused for a job outside its subtree, not
-// allowed. Revert check: restore the sink-only check in inOwnSubtree and
+// allowed. Revert check: make inSubagent check only the sink key and
 // Cancel fires on job-b-2.
 func TestKillJob_DepthWithoutSinkRefusesUnrelatedTarget(t *testing.T) {
 	c := &fakeCanceler{}
@@ -298,7 +298,7 @@ func TestKillJob_DepthWithoutSinkRefusesUnrelatedTarget(t *testing.T) {
 	}
 }
 
-// TestKillJob_DepthWithoutSinkMayStopSelfAndOwnSubtree: a child at depth above 0
+// TestKillJob_DepthWithoutSinkAllowsOwnSubtree: a child at depth above 0
 // without the sink key keeps its own subtree and may stop itself.
 // Revert check: make inOwnSubtree refuse every target at depth 1 and the
 // self-stop and subtree allowance fail.
@@ -335,8 +335,8 @@ func TestKillJob_MainAgentAtDepthZeroUnrestricted(t *testing.T) {
 }
 
 // TestWait_DepthWithoutSinkRefusesUnrelatedTarget: wait follows the same rule
-// at depth above 0 without the sink key. Revert check: restore the sink-only
-// check in inOwnSubtree and the wait call reaches the waiter.
+// at depth above 0 without the sink key. Revert check: make inSubagent check
+// only the sink key and the wait call reaches the waiter.
 func TestWait_DepthWithoutSinkRefusesUnrelatedTarget(t *testing.T) {
 	lister := &fakeLister{jobs: []JobKindSource{
 		fakeJob{id: "job-a-1", parentID: ""},
@@ -355,6 +355,45 @@ func TestWait_DepthWithoutSinkRefusesUnrelatedTarget(t *testing.T) {
 	}
 	if w.count() != 0 {
 		t.Errorf("waiter must not be asked about a refused job, got %d calls", w.count())
+	}
+}
+
+// TestWait_DepthWithoutSinkUnknownIDMatchesChild: a child at depth above 0
+// without the sink key gets the same unknown-id error as a child with the sink
+// key, not the subtree refusal. Revert check: restore the sink-only inChild in
+// wait.go and the depth-only case returns "refused".
+func TestWait_DepthWithoutSinkUnknownIDMatchesChild(t *testing.T) {
+	lister := &fakeLister{jobs: []JobKindSource{fakeJob{id: "job-a-1", parentID: ""}}}
+	withKillWiring(t, nil, lister)
+	tool := &WaitTool{Waiter: &countingWaiter{}}
+
+	for name, ctx := range map[string]context.Context{
+		"with sink":  childCtx("job-a-1"),
+		"depth only": depthOnlyCtx("job-a-1"),
+	} {
+		res := tool.Run(ctx, map[string]any{"job_id": "job-missing", "seconds": 0})
+		if res.Error != unknownJobIDError {
+			t.Errorf("%s: want the unknown-id error, got %q", name, res.Error)
+		}
+	}
+}
+
+// TestWaitIDs_DepthWithoutSinkUnknownIDMatchesChild: the same rule for wait with
+// ids. Revert check: restore the sink-only inChild in wait_ids.go and the
+// depth-only case returns "refused".
+func TestWaitIDs_DepthWithoutSinkUnknownIDMatchesChild(t *testing.T) {
+	lister := &fakeLister{jobs: []JobKindSource{fakeJob{id: "job-a-1", parentID: ""}}}
+	withKillWiring(t, nil, lister)
+	tool := &WaitTool{Waiter: &countingWaiter{}}
+
+	for name, ctx := range map[string]context.Context{
+		"with sink":  childCtx("job-a-1"),
+		"depth only": depthOnlyCtx("job-a-1"),
+	} {
+		res := tool.Run(ctx, map[string]any{"ids": []any{"job-missing-1", "job-missing-2"}, "mode": "any", "seconds": 0})
+		if res.Error != unknownJobIDError {
+			t.Errorf("%s: want the unknown-id error, got %q", name, res.Error)
+		}
 	}
 }
 

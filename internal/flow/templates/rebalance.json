@@ -5,7 +5,7 @@
     "collect":  {"check": "checks/rebalance_collect.sh", "on": {"found": "split", "none": "done", "fail": "failed", "default": "failed"}},
     "split":    {"agent": "oracle", "task": "rebalance_split", "max_visits": 3, "on": {"done": "validate", "default": "failed"}},
     "validate": {"check": "checks/rebalance_validate.sh", "on": {"ok": "ask", "invalid": "split", "fail": "failed", "default": "failed"}},
-    "ask":      {"ask": "The proposal is shown below. Answer yes to create the new milestones and assign the issues, or no to stop. A no changes nothing on GitHub.", "human": true, "on": {"yes": "apply", "no": "declined", "default": "declined"}},
+    "ask":      {"ask": "Below is the proposal, or the reason it is not valid. Answer yes only for a valid proposal, to create the new milestones and assign the issues. Answer no to stop. A no changes nothing on GitHub.", "human": true, "on": {"yes": "apply", "no": "declined", "default": "declined"}},
     "apply":    {"check": "checks/rebalance_apply.sh", "on": {"done": "done", "fail": "failed", "default": "failed"}},
     "done":     {"end": true, "result": "done"},
     "declined": {"end": true, "result": "declined"},
