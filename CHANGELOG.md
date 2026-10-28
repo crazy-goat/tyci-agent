@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: when `milestone-close` does not start, the notice says how to install it, with `tyci workflow init milestone-close`. The hint is added after the cut error text, so a long error does not hide it (#741).
 - Agent: a job or run notice no longer resets the end-of-turn job reminder budget. Only a real user message resets it. The todo reminder budget follows the same rule (#484).
 - CLI: `tyci workflow run` writes the debug log to `~/.tyci/debug/`, and `--no-debug` turns it off (#515).
+- Subagents: `wait`, `wait` with ids and background `bash` use the same subagent rule as `kill_job` (#724).
 
 ## [0.10.0] - 2026-10-14
 

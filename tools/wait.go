@@ -257,8 +257,7 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		// Without a lister this fails closed: no id is known.
 		lister := getJobLister()
 		fullID, known := resolveListedJob(lister, jobID)
-		inChild := ctx.Value(SubagentSinkCtxKey{}) != nil
-		if inChild && !known {
+		if inSubagent(ctx) && !known {
 			return ToolResult{Type: "result", Success: false, Error: unknownJobIDError}
 		}
 		if !inOwnSubtree(ctx, callerJobID, fullID, lister) {
