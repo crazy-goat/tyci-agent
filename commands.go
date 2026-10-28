@@ -653,16 +653,16 @@ var tuiCmd = &cobra.Command{
 		// Chat tools workflow_start/status/resume exist only in tui:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
 		// The schema is read on every request (cfg.SchemaFunc), so they are offered.
-		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
+		tools.SetWorkflowManager(workflowRepos)
 		cfg.Schema = nil
 		cfg.SchemaFunc = tools.GetTopLevelToolsSchemaJSON
 		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath)
-		workflowManager.SetBase(ctx)
-		defer workflowManager.Shutdown(3 * time.Second)
+		workflowRepos.SetBase(ctx)
+		defer workflowRepos.Shutdown(3 * time.Second)
 		startRunLogHousekeeping(ctx)
 		resumeWorkflowRuns()
 		// Planner sessions stay open until tyci exits. Defers run in reverse
-		// order, so they close before workflowManager.Shutdown and shutdown.
+		// order, so they close before workflowRepos.Shutdown and shutdown.
 		defer closePlannerSessions(os.Stdout)
 		runTUI(cond, tuiDisp, ctx, orchStart)
 		return nil

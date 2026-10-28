@@ -244,8 +244,9 @@ func addRunWorktree(ctx context.Context, info RepoInfo, runID string, issue int)
 type ChatTools struct{ M *Manager }
 
 // Start implements tools.WorkflowManager. A missing required param gets a text
-// that tells the model to ask the user first.
-func (c ChatTools) Start(ctx context.Context, workflow string, params []string) (string, []string, error) {
+// that tells the model to ask the user first. repo is not used: c.M has one
+// repository (Repos picks it).
+func (c ChatTools) Start(ctx context.Context, _, workflow string, params []string) (string, []string, error) {
 	run, warnings, err := c.M.Start(ctx, StartRequest{Workflow: workflow, Params: params})
 	var mp MissingParamError
 	if errors.As(err, &mp) {
