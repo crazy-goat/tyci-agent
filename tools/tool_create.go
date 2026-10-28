@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -20,6 +21,16 @@ type ToolCreateTool struct{}
 // toolCreateName is the name of the tool. Permission and schema code refer to
 // it: a role gets the tool only when its tools list names it (see AllowedFor).
 const toolCreateName = "tool_create"
+
+// roleGatedTools are the tools that only the main chat and a role or agent
+// that names them in its tools list may call (see AllowedFor and
+// SubagentToolCreateGate).
+var roleGatedTools = []string{toolCreateName, toolPromoteName}
+
+// isRoleGatedTool reports whether name is one of roleGatedTools.
+func isRoleGatedTool(name string) bool {
+	return slices.Contains(roleGatedTools, name)
+}
 
 // toolCreateLimit bounds the load of the script and each supplied test. The
 // script is model-written, so it must not run without a time limit.

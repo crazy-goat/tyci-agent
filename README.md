@@ -1103,6 +1103,14 @@ only when its `tools` list also names that tool. The main chat sees a tool made 
 the session on its next request. A workflow role or named agent keeps the tool list
 it had at spawn, so it does not see a new tool until it starts again.
 
+The `tool_promote` tool copies a Lua tool from the run folder into the project. It
+writes `.tyci/tools/<name>.lua` in the current worktree. Before the copy, a read-only
+safety review reads the script. The copy happens only when the review answers `SAFE`
+on its first line. Any other answer copies nothing, and the chat asks the user. The
+tool never commits, pushes or merges, and it does not overwrite an existing file. It
+runs only in a linked git worktree, not in the main checkout. The main chat has
+`tool_promote`. A workflow role has it only when its `tools` list names it.
+
 ## Write freshness
 
 `write` refuses to modify a file that already exists unless it was read first
