@@ -81,6 +81,9 @@ type Forge struct {
 type Repo struct {
 	Forge string `json:"forge"` // "", "github" or "gitlab"
 	URL   string `json:"url"`   // GitLab server, https://...; required for "gitlab"
+	// Path is the local checkout of the repository, an absolute path. A repo
+	// with a path is open in every session and can be in daemon.repos (#218).
+	Path string `json:"path,omitempty"`
 }
 
 // GitLabURL returns the server URL of repo when repos selects GitLab for it,
@@ -366,6 +369,9 @@ func (c *Config) validate() error {
 			}
 		default:
 			return fmt.Errorf("repos.%s.forge: unknown forge %q (\"github\" or \"gitlab\")", name, r.Forge)
+		}
+		if r.Path != "" && !filepath.IsAbs(r.Path) {
+			return fmt.Errorf("repos.%s.path: %q is not an absolute path", name, r.Path)
 		}
 	}
 	if c.DefaultModel != "" && !c.hasModel(c.DefaultModel) {
