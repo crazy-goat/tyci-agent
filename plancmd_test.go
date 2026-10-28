@@ -1,10 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/planner"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
@@ -95,6 +97,7 @@ func installPlanFakes(t *testing.T, home, work string) *planFakes {
 	t.Cleanup(func() {
 		planRepoInfo, planNew, planSpawn, planNotify = origInfo, origNew, origSpawn, origNotify
 	})
+	resetPlannerSessions(t)
 	planRepoInfo = func() (flow.RepoInfo, error) {
 		return flow.RepoInfo{Home: home, Root: work, MainRoot: work, Repo: work, DefaultBranch: "main"}, nil
 	}
@@ -115,8 +118,19 @@ func installPlanFakes(t *testing.T, home, work string) *planFakes {
 	return f
 }
 
-// finish waits for the next planner job to start and to end. Its session is
-// closed before the job ends. It returns the job id.
+// resetPlannerSessions empties the registry of open sessions for this test.
+// At the end of the test the open sessions are closed, so no worktree is left
+// in the temp home.
+func resetPlannerSessions(t *testing.T) {
+	t.Helper()
+	plannerSessionsMu.Lock()
+	plannerSessions = map[string]plannerEntry{}
+	plannerSessionsMu.Unlock()
+	t.Cleanup(func() { closePlannerSessions(io.Discard) })
+}
+
+// finish waits for the next planner job to start and to end. Its session
+// stays open. It returns the job id.
 func (f *planFakes) finish(t *testing.T) string {
 	t.Helper()
 	var id string
@@ -191,8 +205,11 @@ func TestPlanCommand_StartsPlannerJobInNewWorktree(t *testing.T) {
 	if s.SystemPrompt == "" {
 		t.Fatal("planner job has no system prompt")
 	}
-	if _, err := os.Stat(s.Dir); !os.IsNotExist(err) {
-		t.Fatalf("clean worktree %s was not removed (err = %v)", s.Dir, err)
+	if _, err := os.Stat(s.Dir); err != nil {
+		t.Fatalf("worktree %s must stay open until tyci exits: %v", s.Dir, err)
+	}
+	if n := len(plannerSessions); n != 1 {
+		t.Fatalf("open planner sessions = %d, want 1", n)
 	}
 }
 
@@ -233,53 +250,6 @@ func TestPlanCommand_TwoPlannersHaveDistinctWorktrees(t *testing.T) {
 	}
 	if f.jobIDs[0] == f.jobIDs[1] {
 		t.Fatalf("both planners share job %s", f.jobIDs[0])
-	}
-}
-
-func TestPlanCommand_KeptWorktreeShowsNotice(t *testing.T) {
-	home, work := newPlanRepo(t)
-	withTestWiring(t)
-	f := installPlanFakes(t, home, work)
-	f.hook = func(dir string) {
-		if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("plan"), 0o644); err != nil {
-			t.Error(err)
-		}
-	}
-
-	if err := startPlanner(context.Background(), "topic"); err != nil {
-		t.Fatalf("startPlanner: %v", err)
-	}
-	nextNotice(t, f)
-	f.finish(t)
-
-	n := nextNotice(t, f)
-	dir := f.specs[0].Dir
-	if !strings.Contains(n, dir) || !strings.Contains(n, "kept") {
-		t.Fatalf("notice = %q, want the kept worktree %s", n, dir)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "plan.md")); err != nil {
-		t.Fatalf("kept worktree lost its file: %v", err)
-	}
-}
-
-func TestPlanCommand_CloseErrorShowsNotice(t *testing.T) {
-	home, work := newPlanRepo(t)
-	withTestWiring(t)
-	f := installPlanFakes(t, home, work)
-	f.hook = func(dir string) {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Error(err)
-		}
-	}
-
-	if err := startPlanner(context.Background(), "topic"); err != nil {
-		t.Fatalf("startPlanner: %v", err)
-	}
-	nextNotice(t, f)
-	f.finish(t)
-
-	if n := nextNotice(t, f); !strings.HasPrefix(n, "/plan: close planner session") {
-		t.Fatalf("notice = %q, want the close error", n)
 	}
 }
 
@@ -325,9 +295,107 @@ func TestPlanCommand_NoOrchestratorPath(t *testing.T) {
 	}
 }
 
-func TestAgentRunWorkdir_RefusesPlannerJob(t *testing.T) {
-	markPlannerJob("planner-job-1")
-	if _, err := agentRunWorkdir("planner-job-1"); !errors.Is(err, errPlannerNotResumable) {
-		t.Fatalf("err = %v, want errPlannerNotResumable", err)
+// commitIn adds a file with a commit in dir, so the worktree counts as changed.
+func commitIn(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planGit(t, dir, "add", "plan.md")
+	planGit(t, dir, "commit", "-qm", "plan")
+}
+
+// openPlannerSession opens a real planner session in work and keeps it under
+// jobID, as startPlanner does.
+func openPlannerSession(t *testing.T, work, jobID string) *planner.Session {
+	t.Helper()
+	s, err := planner.New(work)
+	if err != nil {
+		t.Fatalf("planner.New: %v", err)
+	}
+	policy := tools.Policy{Role: plannerRole, Permission: flowconfig.PermissionWorktreeWrite, Dir: s.Worktree}
+	registerPlannerSession(jobID, plannerEntry{session: s, policy: policy})
+	return s
+}
+
+func TestClosePlannerSessions_CleanRemovedKeptHasNotice(t *testing.T) {
+	_, work := newPlanRepo(t)
+	withTestWiring(t)
+	resetPlannerSessions(t)
+
+	clean := openPlannerSession(t, work, "job-clean")
+	kept := openPlannerSession(t, work, "job-kept")
+	commitIn(t, kept.Worktree)
+
+	var out bytes.Buffer
+	closePlannerSessions(&out)
+
+	if _, err := os.Stat(clean.Worktree); !os.IsNotExist(err) {
+		t.Fatalf("clean worktree %s was not removed (err = %v)", clean.Worktree, err)
+	}
+	if _, err := os.Stat(kept.Worktree); err != nil {
+		t.Fatalf("kept worktree %s was removed: %v", kept.Worktree, err)
+	}
+	want := "planner session job-kept kept: its worktree is " + kept.Worktree
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("output = %q, want %q", out.String(), want)
+	}
+	if strings.Contains(out.String(), "job-clean") {
+		t.Fatalf("output names the removed session: %q", out.String())
+	}
+	if n := len(plannerSessions); n != 0 {
+		t.Fatalf("open planner sessions after exit = %d, want 0", n)
+	}
+}
+
+func TestClosePlannerSessions_CloseErrorIsPrinted(t *testing.T) {
+	_, work := newPlanRepo(t)
+	withTestWiring(t)
+	resetPlannerSessions(t)
+
+	s := openPlannerSession(t, work, "job-broken")
+	if err := os.RemoveAll(s.Worktree); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	closePlannerSessions(&out)
+	if !strings.Contains(out.String(), "/plan: close planner session job-broken:") {
+		t.Fatalf("output = %q, want the close error", out.String())
+	}
+}
+
+func TestAgentRunWorkdir_ResumedPlannerRunsInItsWorktree(t *testing.T) {
+	_, work := newPlanRepo(t)
+	withTestWiring(t)
+	resetPlannerSessions(t)
+
+	s := openPlannerSession(t, work, "planner-job")
+	resumableMu.Lock()
+	resumable["resumed-job"] = resumableEntry{chain: []string{"planner-job", "resumed-job"}}
+	resumableMu.Unlock()
+	t.Cleanup(func() {
+		resumableMu.Lock()
+		delete(resumable, "resumed-job")
+		resumableMu.Unlock()
+	})
+
+	for _, id := range []string{"planner-job", "resumed-job"} {
+		got, err := agentRunWorkdir(id)
+		if err != nil || got != s.Worktree {
+			t.Fatalf("agentRunWorkdir(%s) = %q, %v; want %q", id, got, err, s.Worktree)
+		}
+	}
+
+	ctx, err := agentResumeContext("resumed-job")
+	if err != nil {
+		t.Fatalf("agentResumeContext: %v", err)
+	}
+	if dir := tools.Workdir(ctx); dir != s.Worktree {
+		t.Fatalf("resumed planner workdir = %q, want %q (never the process directory)", dir, s.Worktree)
+	}
+	p, ok := tools.PolicyOf(ctx)
+	if !ok || p.Role != plannerRole || p.Permission != flowconfig.PermissionWorktreeWrite || p.Dir != s.Worktree {
+		t.Fatalf("resumed planner policy = %+v, ok = %v", p, ok)
 	}
 }

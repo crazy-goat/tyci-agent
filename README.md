@@ -192,9 +192,9 @@ Type `/plan [topic]` in the chat to start a planner. The topic is the first mess
 - A planner works in its own git worktree under `~/.tyci/worktrees/`. It does not change your checkout.
 - A planner does not take a worker slot of the orchestrator.
 - A notice shows the job id and the worktree of the planner when it starts.
-- The planner ends after its answer. Its worktree is removed when it has no change.
-- If the planner changed a file, its worktree and its branch `plan-<id>` are kept. A notice shows the path.
-- A finished planner cannot be resumed. To go on, start a new planner with `/plan`.
+- The planner stays open until tyci exits. You can resume it after its answer. It keeps working in its own worktree.
+- When tyci exits, the worktree of a planner with no change is removed.
+- When tyci exits, the worktree of a planner that changed a file is kept, with its branch `plan-<id>`. A notice on the terminal shows the path.
 
 ### Workflow proposals
 

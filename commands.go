@@ -643,6 +643,9 @@ var tuiCmd = &cobra.Command{
 		defer workflowManager.Shutdown(3 * time.Second)
 		startRunLogHousekeeping(ctx)
 		resumeWorkflowRuns()
+		// Planner sessions stay open until tyci exits. Defers run in reverse
+		// order, so they close before workflowManager.Shutdown and shutdown.
+		defer closePlannerSessions(os.Stdout)
 		runTUI(cond, tuiDisp, ctx, orchStart)
 		return nil
 	},
