@@ -175,8 +175,8 @@ func TestScout_HittingMaxIterationsCapReportsRealNumber(t *testing.T) {
 
 	ctx := connector.WithModelClient(tools.WithDepth(context.Background(), 1), fake)
 	res := tools.RunTool(ctx, "scout", map[string]any{"task": "loop forever"})
-	// agent.Run's own iteration-cap warning ("Agent executed N tool-call
-	// iterations...") is text, so this surfaces as a partial success
+	// agentRunner.run appends agent.Run's iteration-cap notice to the text
+	// (appendMaxIterationsNotice), so this surfaces as a partial success
 	// (Truncated=true), not a bare failure — same as an ordinary subagent
 	// hitting a cutoff with something to show.
 	if !res.Success || !res.Truncated {

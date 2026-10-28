@@ -75,7 +75,7 @@ while IFS= read -r n; do
     move "$n"
 done < <(jq -r '.critical[]' <<<"$plan")
 
-doubt=$(jq -r '.doubt | join(" #")' <<<"$plan")
+doubt=$(jq -r '.doubt | map(tostring) | join(" #")' <<<"$plan")
 if [ -n "$doubt" ]; then
     approved=false
     if [ -f "$run/approvals.txt" ] && awk -F'\t' '$2 == "ask" && $3 == "yes" { found = 1 } END { exit !found }' "$run/approvals.txt"; then
