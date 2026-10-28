@@ -734,8 +734,8 @@ func runC1Iteration(t *testing.T) {
 			t.Errorf("job %q ended %s (%s), want done", j.Description, j.Status, j.Err)
 		}
 	}
-	// The loser's no-TTL lock is dropped on a goroutine after its job is
-	// already terminal, so poll for the release instead of reading once.
+	// The loser's no-TTL lock can still be held after its job is terminal,
+	// because the release runs on a goroutine. Poll for it instead of reading once.
 	deadline = time.Now().Add(5 * time.Second)
 	for {
 		if _, locked := tools.LockRegistry.IsLocked("/race/path"); !locked {
