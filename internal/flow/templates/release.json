@@ -17,7 +17,7 @@
     "close":       {"check": "checks/milestone_close.sh", "on": {"ok": "done", "fail": "fixer", "default": "fixer"}},
     "fixer":       {"agent": "fixer", "task": "fixer", "on": {"ok": "$failed", "failed": "oracle", "default": "oracle"}},
     "oracle":      {"agent": "oracle", "task": "recover", "on": {"stop": "failed", "ask": "ask", "default": "ask"}},
-    "ask":         {"ask": "The release run needs a human decision.", "on": {"retry": "code", "stop": "failed"}},
+    "ask":         {"ask": "The release run needs a human decision. If the CHANGELOG pull request is already merged, answer `goto tag`. If the release tag is already on origin, answer `goto wait`. Do not answer `retry` after the merge.", "on": {"retry": "code", "stop": "failed"}},
     "done":        {"end": true, "result": "done"},
     "declined":    {"end": true, "result": "declined"},
     "failed":      {"end": true, "result": "failed"}

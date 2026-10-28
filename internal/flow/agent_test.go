@@ -368,3 +368,17 @@ func TestSavedOracle_SavesTextAsOutput(t *testing.T) {
 		}
 	}
 }
+
+// #446: a role run gets the run worktree as its directory and as the root of
+// its write policy, so write and edit refuse paths outside the worktree.
+func TestSubagentRunner_RunPolicyIsRunWorktree(t *testing.T) {
+	s := &spawnRec{result: "done"}
+	wt := t.TempDir()
+	if _, _, err := newRunner(s).Text(context.Background(), "worker", "", RunContext{Worktree: wt, Issue: 7}); err != nil {
+		t.Fatal(err)
+	}
+	sp := s.specs[0]
+	if sp.Dir != wt || sp.Policy == nil || sp.Policy.Dir != wt || sp.Policy.Role != "worker" || sp.Policy.Permission != tools.PermissionWorktreeWrite {
+		t.Errorf("spec dir %q policy %+v", sp.Dir, sp.Policy)
+	}
+}

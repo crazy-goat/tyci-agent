@@ -80,10 +80,9 @@ func (t *WaitTool) runIDs(ctx context.Context, callerJobID string, ids []string,
 		return ToolResult{Type: "result", Success: false, Error: "job registry unavailable; omit job_id to just wait N seconds"}
 	}
 	lister := getJobLister()
-	inChild := ctx.Value(SubagentSinkCtxKey{}) != nil
 	for _, id := range ids {
 		fullID, known := resolveListedJob(lister, id)
-		if inChild && !known {
+		if inSubagent(ctx) && !known {
 			return ToolResult{Type: "result", Success: false, Error: unknownJobIDError}
 		}
 		if !inOwnSubtree(ctx, callerJobID, fullID, lister) {
