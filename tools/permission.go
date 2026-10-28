@@ -27,6 +27,7 @@ type Policy struct {
 	// Tools is the explicit tool list of the role. Nil means the default set of Permission.
 	Tools []string
 	// Dir is the worktree of the run. With worktree-write, write and edit stay inside it.
+	// bash runs in Dir too, but it is not sandboxed.
 	Dir string
 }
 
@@ -34,7 +35,8 @@ type Policy struct {
 // and does not change the worktree, and Network turns it off.
 var readTools = []string{"read", "find", "skills", "agents", "todo", "wait", "ask_parent", "message", "web"}
 
-// writeTools are added by worktree-write.
+// writeTools are added by worktree-write. The write root does not limit bash
+// (see checkWriteRoot).
 var writeTools = []string{"write", "bash", "kill_job"}
 
 // isMCPTool reports whether name is an MCP tool (mcp_<server>_<tool>).
@@ -178,8 +180,28 @@ func PolicyOf(ctx context.Context) (Policy, bool) {
 	return p, ok
 }
 
+// writeRootLine is added to the system prompt of a worktree-write run. It
+// tells the model the write root, which only write and edit enforce.
+const writeRootLine = "Never change files outside your working directory %s. bash is not sandboxed."
+
+// withWriteRootLine returns system with writeRootLine appended when p has a
+// write root. It uses the same condition as checkWriteRoot, so the prompt and
+// the check agree. Other policies get system unchanged.
+func withWriteRootLine(system string, p Policy) string {
+	if p.Permission != PermissionWorktreeWrite || p.Dir == "" {
+		return system
+	}
+	line := fmt.Sprintf(writeRootLine, p.Dir)
+	if system = strings.TrimSpace(system); system == "" {
+		return line
+	}
+	return system + "\n\n" + line
+}
+
 // checkWriteRoot refuses a write or edit path outside the worktree of the
 // policy. It applies only with worktree-write. Symlinks are resolved first.
+// The limit covers only write and edit: bash runs in the worktree but is not
+// sandboxed, so a command with an absolute path or cd can change files outside it.
 func checkWriteRoot(ctx context.Context, path string) error {
 	p, ok := ctx.Value(policyCtxKey{}).(Policy)
 	if !ok || p.Permission != PermissionWorktreeWrite || p.Dir == "" {

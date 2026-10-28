@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,5 +140,36 @@ func TestAgentRunnerRun_RunTranscriptReplacesChildSession(t *testing.T) {
 	}
 	if strings.Contains(string(b), "ghp_abcdefghij") || !strings.Contains(string(b), "reply") {
 		t.Fatalf("transcript not redacted or empty: %s", b)
+	}
+}
+
+// TestAgentRunnerRun_ChildHeaderNamesRunWorkdir pins the cwd of a child's
+// transcript header: the working directory of its run, not the process
+// directory. A run without a working directory names the process directory.
+func TestAgentRunnerRun_ChildHeaderNamesRunWorkdir(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	wt := t.TempDir()
+	ctx := connector.WithModelClient(context.Background(), connectortest.Text("job reply"))
+	ctx = context.WithValue(ctx, tools.JobIDCtxKey{}, "job-cwd-header")
+	ctx = tools.WithWorkdir(ctx, wt)
+	if _, err := (&agentRunner{}).run(ctx, "job task", "", "", tools.SubagentOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	files := childFiles(t)
+	if len(files) != 1 {
+		t.Fatalf("files = %v", files)
+	}
+	b, _ := os.ReadFile(files[0])
+	var h session.Header
+	if err := json.Unmarshal([]byte(strings.SplitN(string(b), "\n", 2)[0]), &h); err != nil {
+		t.Fatalf("header: %v", err)
+	}
+	if h.CWD != wt {
+		t.Fatalf("header cwd = %q, want the run worktree %q", h.CWD, wt)
+	}
+
+	cwd, _ := os.Getwd()
+	if got := childWorkdir(context.Background()); got != cwd {
+		t.Fatalf("childWorkdir without a workdir = %q, want %q", got, cwd)
 	}
 }
