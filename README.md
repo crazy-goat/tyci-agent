@@ -354,6 +354,26 @@ This example asks the daemon for its status:
 echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | nc -U ~/.tyci/daemon/daemon.sock
 ```
 
+### MCP server
+
+`tyci mcp serve` is an MCP server on stdin and stdout. Another program, for example Claude Code, can use it to read the tyci runs. To add it to Claude Code, run this command in the project directory:
+
+```bash
+claude mcp add tyci -- tyci mcp serve
+```
+
+The server has two tools. Both tools are read-only. No tool starts, changes or stops a run.
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `tyci_runs_list` | none | The `running` and `paused` runs as JSON, the same as `runs.list` |
+| `tyci_run_status` | `{"run": "<run-id>"}` | The saved state of the run and the path of its state file as JSON, the same as `runs.get` |
+
+- If `tyci daemon` runs, the tools ask the daemon over its socket. Then `tyci_runs_list` lists the runs of the daemon repositories.
+- If no daemon answers, the tools read the run files in `~/.tyci/runs/`. Then `tyci_runs_list` lists the runs of the repository of the current directory. Outside a repository, the list is empty.
+- `tyci_run_status` finds a run of any repository, the same as `tyci workflow status`.
+- The server writes its log to stderr. Stdout carries only the protocol messages.
+
 ## Quick Start
 
 ### 1. Configure a provider
