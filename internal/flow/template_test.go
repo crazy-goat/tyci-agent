@@ -107,6 +107,42 @@ func TestIssueToMerge_MergeApprovedLoopNeedsHuman(t *testing.T) {
 	}
 }
 
+// #810: an unknown result of the issue gate (check_done default) goes to the human state
+// ask_check, not to fixer. ask_check is human-only, so the oracle never answers it and the
+// run cannot reach code from the default edge without a human answer.
+func TestIssueToMerge_CheckDoneUnknownAsksHuman(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init("issue-to-merge", "", dir); err != nil {
+		t.Fatal(err)
+	}
+	wf, _, err := Lookup("issue-to-merge", t.TempDir(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &flowconfig.Config{
+		Models:       map[string]string{"m": "prov/model"},
+		DefaultModel: "m",
+		Roles: map[string]flowconfig.Role{
+			"worker": {Prompt: "W"}, "review": {Prompt: "R"}, "fixer": {Prompt: "F"}, "oracle": {Prompt: "O"},
+		},
+	}
+	if _, err := Validate(wf, cfg, wfResolver(wf)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	def := wf.States["check_done"].On["default"]
+	if def != "ask_check" {
+		t.Fatalf("check_done default -> %q, want ask_check", def)
+	}
+	ac := wf.States["ask_check"]
+	if !ac.Human || ac.Ask == "" || !maps.Equal(ac.On, map[string]string{"retry": "check_done", "stop": "end"}) {
+		t.Errorf("ask_check = %+v", ac)
+	}
+	r := &Runner{WF: wf, Agents: &fakeAgents{}}
+	if r.oracleMayAnswer(&RunState{Ask: &Ask{Message: "m"}}, ac) {
+		t.Error("the oracle may answer ask_check")
+	}
+}
+
 func TestInit_NameTemplateAndBadInput(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Init("roadmap", "plan", dir); err != nil {
