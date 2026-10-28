@@ -1121,10 +1121,17 @@ the session ends. The script and each test run under a 2 s limit. The optional
 `tests` input is a list of `{args, expect}`: each case runs the tool with `args`, and
 its result must contain `expect`. If a case fails, the script is removed and nothing
 is registered. The main chat has `tool_create`. A workflow role has it only
-when its `tools` list names it. A role or named agent can call its own created tool
-only when its `tools` list also names that tool. The main chat sees a tool made in
-the session on its next request. A workflow role or named agent keeps the tool list
-it had at spawn, so it does not see a new tool until it starts again.
+when its `tools` list names it. A role or named agent can call a tool it created only
+through `tool()` in the `lua` tool, and only when its `tools` list names the new tool.
+The main chat sees a tool made in the session on its next request. A workflow role or
+named agent keeps the tool list it had at spawn, so it does not see a new tool until
+it starts again.
+
+When a paused run starts again, also after a tyci restart, tyci loads the tool files
+of its run folder again. A file that fails the same checks as `tool_create` is skipped
+with a warning, and the other files load. When tyci starts, it removes the session
+folders of tyci processes that have exited. A session folder name holds the PID of its
+owner. A folder without a PID, made by an older tyci, is removed after 24 hours.
 
 The `tool_promote` tool copies a Lua tool from the run folder into the project. It
 writes `.tyci/tools/<name>.lua` in the current worktree. Before the copy, a read-only
