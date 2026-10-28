@@ -105,8 +105,58 @@ func AddRun(ctx context.Context, home, repo, runID string, defaultBranch string,
 	return addNamed(ctx, home, repo, "run-"+runID, defaultBranch, trusted)
 }
 
-// addNamed is the shared part of AddIssue and AddRun: the worktree and the branch
-// are both named name.
+// AddPlan creates <home>/.tyci/worktrees/<repoName>/plan-<id> on branch plan-<id>
+// from origin/<defaultBranch> for a planner session. It never runs the
+// repository's setup script: a planner only reads and writes files.
+//
+// A second call with the same id returns the existing worktree. Its BaseCommit
+// is the fork point of the branch with origin/<defaultBranch>, so Changed still
+// tells the planner's own commits from the upstream ones. Nothing is fetched.
+func AddPlan(ctx context.Context, home, repo, id, defaultBranch string) (*Worktree, error) {
+	if id == "" {
+		return nil, fmt.Errorf("worktree: plan id must not be empty")
+	}
+	if defaultBranch == "" {
+		return nil, fmt.Errorf("worktree: default branch must not be empty")
+	}
+	if home == "" {
+		return nil, fmt.Errorf("worktree: home directory must not be empty")
+	}
+
+	name := "plan-" + id
+	root, target, err := namedPath(ctx, home, repo, name)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(target); err != nil {
+		return addNamed(ctx, home, repo, name, defaultBranch, false)
+	}
+	if !BranchExists(ctx, root, name) {
+		return addNamed(ctx, home, repo, name, defaultBranch, false)
+	}
+
+	base, err := git(ctx, root, "merge-base", "refs/heads/"+name, "origin/"+defaultBranch)
+	if err != nil {
+		return nil, fmt.Errorf("worktree: git merge-base %s origin/%s: %w: %s", name, defaultBranch, err, base)
+	}
+	return &Worktree{Dir: target, Branch: name, Repo: root, BaseCommit: strings.TrimSpace(base), keepParent: true}, nil
+}
+
+// namedPath returns the main checkout that named worktrees of repo belong to,
+// and the directory <home>/.tyci/worktrees/<repoName>/<name> for a worktree
+// called name. The main checkout is used so a run started inside a worktree
+// does not nest under the worktree's name.
+func namedPath(ctx context.Context, home, repo, name string) (root, target string, err error) {
+	top, err := Root(ctx, repo)
+	if err != nil {
+		return "", "", err
+	}
+	root = gitinfo.ProjectDir(top)
+	return root, filepath.Join(home, ".tyci", "worktrees", filepath.Base(root), name), nil
+}
+
+// addNamed is the shared part of AddIssue, AddRun and AddPlan: the worktree and
+// the branch are both named name.
 func addNamed(ctx context.Context, home, repo, name string, defaultBranch string, trusted bool) (*Worktree, error) {
 	if defaultBranch == "" {
 		return nil, fmt.Errorf("worktree: default branch must not be empty")
@@ -115,16 +165,11 @@ func addNamed(ctx context.Context, home, repo, name string, defaultBranch string
 		return nil, fmt.Errorf("worktree: home directory must not be empty")
 	}
 
-	top, err := Root(ctx, repo)
+	root, target, err := namedPath(ctx, home, repo, name)
 	if err != nil {
 		return nil, err
 	}
-	// Name the worktree after the main checkout, and run git there, so a run
-	// started inside a worktree does not nest under the worktree's name.
-	root := gitinfo.ProjectDir(top)
-
 	branch := name
-	target := filepath.Join(home, ".tyci", "worktrees", filepath.Base(root), branch)
 
 	if _, err := os.Stat(target); err == nil {
 		return nil, fmt.Errorf("worktree: %s already exists; remove it first (git worktree remove --force %s)", target, target)
