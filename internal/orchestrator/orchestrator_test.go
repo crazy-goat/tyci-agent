@@ -426,6 +426,27 @@ func TestBusyIssueKeepsTodoAndOthersStart(t *testing.T) {
 	}
 }
 
+// TestNoSlotWaitsAndStartsLater: runs that the orchestrator does not watch (for
+// example chat runs) hold all worker slots. The orchestrator keeps its items
+// todo, and starts them when a slot is free again (#218).
+func TestNoSlotWaitsAndStartsLater(t *testing.T) {
+	e := newEnv(t, Config{Workers: 3}, issue(1, ""), issue(2, ""))
+	e.o.slotRetry = 20 * time.Millisecond
+	e.r.startErr[1] = fmt.Errorf("%w: orchestrator.workers is 3 and 3 run(s) are active", flow.ErrNoSlot)
+	p := e.start()
+	if len(p.Started) != 0 || e.status(1) != StatusTodo || e.status(2) != StatusTodo || e.r.starts(2) != 0 {
+		t.Fatalf("started %v, items %+v, starts(2)=%d", p.Started, e.o.Roadmap().Items, e.r.starts(2))
+	}
+	// A chat run ends: the slot is free.
+	e.r.mu.Lock()
+	delete(e.r.startErr, 1)
+	e.r.mu.Unlock()
+	got := map[int]bool{e.waitStart(): true, e.waitStart(): true}
+	if !got[1] || !got[2] {
+		t.Fatalf("started %v, want #1 and #2", got)
+	}
+}
+
 func TestStartupStageNotices(t *testing.T) {
 	e := newEnv(t, Config{Workers: 1}, issue(1, ""))
 	e.start()
