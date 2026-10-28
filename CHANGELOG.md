@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Daemon: the new command `tyci daemon` runs tyci without a chat. It starts `issue-to-merge` for an accepted issue of the lowest milestone, `fix-ci` for a red default branch, and the due cron jobs. The `daemon` section of `config.json` sets `enabled`, `poll_interval`, `workers`, `triggers` and `repos`. A run that stops at an ask state stays paused, and the daemon writes one issue comment. The daemon answers `status`, `runs.list` and `runs.get` on the unix socket `~/.tyci/daemon/daemon.sock` (#215).
+- CLI: the new command `tyci workflow resume <run-id> <answer>` answers a paused run and waits until it ends or pauses again (#215).
+- CLI: `tyci workflow status` asks the daemon over its socket when the daemon runs (#215).
+
 ### Changed
 - Lua tools: `tool_promote` copies a tool only when the safety review answers exactly `SAFE`. An answer that has more text, also one that starts with `SAFE`, is refused (#815).
 - Internal: `SubagentToolCreateGate` is renamed `SubagentRoleToolGate`. It checks the role-gated tools `tool_create` and `tool_promote` (#815).
