@@ -356,7 +356,7 @@ func TestSavedOracle_SavesTextAsOutput(t *testing.T) {
 	for _, task := range []string{"pick_critical", "rebalance_split"} {
 		s := &spawnRec{result: "  {\"critical\":[1],\"doubt\":[]}\n"}
 		art := t.TempDir()
-		key, _, err := newRunner(s).Run(context.Background(), "oracle", task, RunContext{Worktree: t.TempDir(), ArtifactDir: art})
+		key, _, err := newRunner(s).Run(context.Background(), "oracle", task, RunContext{Worktree: t.TempDir(), ArtifactDir: art, Saves: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -446,7 +446,7 @@ func TestSubagentRunner_PlanReviewSavesAnswer(t *testing.T) {
 // #214: the plan answer is saved as output.txt, and the state goes on to the plan review.
 func TestSubagentRunner_PlanSavesOutput(t *testing.T) {
 	s := &spawnRec{result: "  1. Goal\nfix it  \n"}
-	rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir(), Issue: 9}
+	rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir(), Issue: 9, Saves: true}
 	key, _, err := newRunner(s).Run(context.Background(), "oracle", "plan", rc)
 	if err != nil || key != "done" {
 		t.Fatalf("key %q err %v", key, err)
@@ -462,7 +462,7 @@ func TestSubagentRunner_PlanSavesOutput(t *testing.T) {
 func TestSubagentRunner_PlanStatesAreReadOnly(t *testing.T) {
 	for _, task := range []string{"plan", "plan_review"} {
 		s := &spawnRec{result: "REJECT\nno"}
-		rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir(), Issue: 9}
+		rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir(), Issue: 9, Saves: task == "plan"}
 		if _, _, err := newRunner(s).Run(context.Background(), "oracle", task, rc); err != nil {
 			t.Fatalf("%s: %v", task, err)
 		}
