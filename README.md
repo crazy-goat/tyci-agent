@@ -342,7 +342,7 @@ A run has a number that counts up for each repository: `#1`, `#2`, and so on. Ru
 | `ci_failure` | The newest completed CI run on the default branch failed. | `fix-ci` |
 | `cron` | A job in `cron.json` is due. The daemon does a cron tick every minute. | the cron job |
 
-- The `issue` and `ci_failure` triggers watch only the repositories in `daemon.repos`. The repository of `--dir` needs only its name in this list. Each other repository also needs `repos.<owner/name>.path` in `~/.tyci/config.json` (see "More than one repository in one session"). The daemon writes a log line for each repository that it cannot open, and skips it. Without repositories, the daemon runs the cron trigger only.
+- The `issue` and `ci_failure` triggers watch only the repositories in `daemon.repos`. The repository of `--dir` needs only its name in this list. Each other repository also needs `repos.<owner/name>.path` in `~/.tyci/config.json` (see "More than one repository in one session"). The daemon writes a log line for each repository that it cannot open, and skips it. The daemon polls each repository under its own name. `forge.repo` does not apply to the daemon. Without repositories, the daemon runs the cron trigger only.
 - Project-local hooks, Lua tools, the local cron dir and `mcp.json` come only from the repository of `--dir`. This is a known limit.
 - The `ci_failure` trigger reads the CI workflow `TYCI_CI_WORKFLOW`. The default is `tests.yaml`, the same as `ci_failure.sh`. A cancelled, skipped or neutral CI run does not count.
 - The daemon keeps no database. A run file in `~/.tyci/runs/` stops a second run for the same issue. This is also true after a restart.

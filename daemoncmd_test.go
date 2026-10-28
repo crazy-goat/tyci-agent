@@ -17,6 +17,7 @@ import (
 
 	"github.com/crazy-goat/tyci-agent/internal/daemon"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
+	"github.com/crazy-goat/tyci-agent/internal/forge"
 )
 
 // shortHome is wfHome in a short temp dir: the daemon socket path must stay
@@ -302,6 +303,22 @@ func TestDaemonCommandWatchesRegistryRepos(t *testing.T) {
 	if !strings.Contains(text, "repo acme/two skipped") || !strings.Contains(text, "origin remote is acme/one") ||
 		!strings.Contains(text, "repo acme/none skipped") || !strings.Contains(text, "has no path") {
 		t.Fatalf("log:\n%s", text)
+	}
+}
+
+// TestDaemonRepoUsesItsOwnForgeRepo makes sure that a global forge.repo does
+// not send the polls of a watched repository to another repository (#218).
+func TestDaemonRepoUsesItsOwnForgeRepo(t *testing.T) {
+	home := shortHome(t)
+	wfWrite(t, filepath.Join(home, ".tyci", "config.json"), `{"forge":{"repo":"acme/demo"}}`)
+	r, err := daemonRepo(context.Background(), flow.RepoInfo{Home: home, Root: home, Repo: "acme/one", DefaultBranch: "main"},
+		func(string, ...any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, ok := r.Forge.(*forge.GitHub)
+	if !ok || g.Repo() != "acme/one" {
+		t.Fatalf("forge %#v, want the GitHub forge of acme/one", r.Forge)
 	}
 }
 

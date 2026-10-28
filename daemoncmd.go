@@ -152,10 +152,11 @@ func daemonRepo(agentCtx context.Context, info flow.RepoInfo, logf func(string, 
 	if err != nil {
 		return daemon.Repo{}, err
 	}
+	// The daemon watches info.Repo, so its forge is always info.Repo. An
+	// explicit forge.repo of the config does not apply: with more than one
+	// watched repository it would make each one poll the same repository (#218).
 	fcfg := fc.Forge
-	if fcfg.Repo == "" || fcfg.Repo == "auto" {
-		fcfg.Repo = info.Repo // the repository of --dir, not of the current directory
-	}
+	fcfg.Repo = info.Repo
 	f, err := newForge(fcfg, fc.Repos, info.Repo)
 	if err != nil {
 		return daemon.Repo{}, err
