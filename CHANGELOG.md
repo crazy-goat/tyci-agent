@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Display: the Runs tab keeps the selection on the same run when runs change state. The cursor no longer moves to another run when a run finishes and the rows reorder (#553).
+- Workflows: a role agent that is resumed to write its `report.md` keeps its tool policy. Its `write` and `edit` refuse paths outside the run worktree, as in the first visit (#446).
 
 ## [0.10.0] - 2026-10-14
 
