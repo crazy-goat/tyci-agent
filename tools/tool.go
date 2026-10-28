@@ -245,6 +245,20 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "tool_promote",
+				"description": "Copy a Lua tool made with tool_create in this run or session into the project, to .tyci/tools/<name>.lua of the current worktree. A read-only safety review must answer SAFE first. If it does not, nothing is copied and the result says so: ask the user. The copy is not committed.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string", "description": "Name of the tool, as given to tool_create"},
+					},
+					"required": []string{"name"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "remind",
 				"description": "One-shot reminder for yourself. When it is due, it arrives as a notice, and that wakes an idle chat. Use cron for repeating schedules. Do not poll with wait. Delivery happens only while an interactive session is open.",
 				"parameters": map[string]any{
@@ -919,8 +933,8 @@ func GetSubagentToolsSchema() []map[string]any {
 	filtered := make([]map[string]any, 0, len(schema))
 	for _, s := range schema {
 		if fn, ok := s["function"].(map[string]any); ok {
-			// tool_create is offered to a subagent only by a tools list that names it.
-			if name, ok := fn["name"].(string); ok && (IsSubagentDenied(name) || name == toolCreateName) {
+			// tool_create and tool_promote are offered to a subagent only by a tools list that names them.
+			if name, ok := fn["name"].(string); ok && (IsSubagentDenied(name) || isRoleGatedTool(name)) {
 				continue
 			}
 		}
@@ -1006,10 +1020,13 @@ func subagentToolsSchemaFor(allowed []string) []map[string]any {
 		}
 		filtered = append(filtered, s)
 	}
-	// GetSubagentToolsSchema leaves tool_create out, so a list that names it
-	// gets it back here. See AllowedFor.
-	if slices.Contains(allowed, toolCreateName) {
-		if entry, ok := findSchemaEntryByName(GetToolsSchema(), toolCreateName); ok {
+	// GetSubagentToolsSchema leaves the role-gated tools out, so a list that
+	// names one gets it back here. See AllowedFor.
+	for _, gated := range roleGatedTools {
+		if !slices.Contains(allowed, gated) {
+			continue
+		}
+		if entry, ok := findSchemaEntryByName(GetToolsSchema(), gated); ok {
 			filtered = append(filtered, entry)
 		}
 	}
@@ -1164,6 +1181,7 @@ var toolRegistry = map[string]Tool{
 	"workflow_stop":   &WorkflowStopTool{},
 	"replace_agent":   &ReplaceAgentTool{},
 	"tool_create":     &ToolCreateTool{},
+	"tool_promote":    &ToolPromoteTool{},
 }
 
 // lookupTool returns the tool registered under name, copying the interface

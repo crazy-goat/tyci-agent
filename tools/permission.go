@@ -62,10 +62,19 @@ func AllowedFor(p Policy, name string) bool {
 	if slices.Contains(alwaysAllowedTools, name) {
 		return true
 	}
-	if name == toolCreateName {
-		// No permission mode grants tool_create. A role gets it only when its
-		// tools list names it.
-		return slices.Contains(p.Tools, name)
+	if isRoleGatedTool(name) {
+		// No permission mode grants tool_create or tool_promote. A role gets
+		// one only when its tools list names it.
+		if !slices.Contains(p.Tools, name) {
+			return false
+		}
+		// tool_promote writes into the worktree, so a role that may not write
+		// (read-only, or an unset mode) never gets it, even when listed.
+		// tool_create writes only into the run folder, so it is not checked here.
+		if name == toolPromoteName {
+			return p.Permission == PermissionWorktreeWrite || p.Permission == PermissionFull
+		}
+		return true
 	}
 	if isMCPTool(name) {
 		// One rule, the same as ToolNames: an MCP tool is offered only when
