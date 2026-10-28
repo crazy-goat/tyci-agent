@@ -720,6 +720,14 @@ decision and its reason. Writing the same name again corrects a note. Notes are
 capped (50 files, 8 KiB each) and the whole block is capped at 32 KiB, because
 all of it is re-sent on every request.
 
+**Role notes** — a workflow role keeps one private note for its own next
+session. The role writes it with `memory(scope="role", action="write", content="...")`
+and reads it with `memory(scope="role", action="read")`. The file is
+`~/.tyci/memory/<repo>/<role>.md`, outside the repository. `<repo>` is the base
+name of the repository directory. Only the role of the run reads its note. The
+note is loaded into the system prompt of that role. Tyci loads at most the last
+16 KiB of the file and logs a warning when the file is larger.
+
 ## Reply length and caching
 
 `max_tokens` caps one reply. It defaults to a conservative 4096, because
