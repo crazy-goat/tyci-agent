@@ -50,7 +50,7 @@ case "$status" in
     if ! login=$(gh api user --jq .login); then
         describe error "could not read the authenticated GitHub account" \
             "gh is not logged in or the GitHub API is unavailable" \
-            "check 'gh auth status'; when the API answers, return ok so the gate runs again"
+            "check 'gh auth status'; when the API answers, answer retry so the gate runs again"
         exit 1
     fi
     assignees=$(jq -r '[.assignees[]?.login] | .[]' <<<"$info")
@@ -64,7 +64,7 @@ case "$status" in
     if ! gh issue edit "$TYCI_ISSUE" -R "$TYCI_REPO" --add-assignee "$login"; then
         describe error "could not assign issue #$TYCI_ISSUE to '$login'" \
             "the account may lack permission to assign issues, or the GitHub API may be unavailable" \
-            "check the issue permissions and 'gh auth status'; when assignment succeeds, return ok so the gate runs again"
+            "check the issue permissions and 'gh auth status'; when assignment succeeds, answer retry so the gate runs again"
         exit 1
     fi
     if [ "$has_risky" = "true" ]; then
@@ -80,7 +80,7 @@ case "$status" in
     echo "issue_done: unexpected response from permission API: ${status:-none}" >&2
     describe error "the GitHub permission API returned HTTP ${status:-none} for issue author '$author' of #$TYCI_ISSUE" \
         "a GitHub outage, a rate limit, or gh is not logged in" \
-        "check 'gh auth status' and 'gh api repos/$TYCI_REPO/collaborators/$author/permission'; when it answers 200 or 404, return ok so the gate runs again"
+        "check 'gh auth status' and 'gh api repos/$TYCI_REPO/collaborators/$author/permission'; when it answers 200 or 404, answer retry so the gate runs again"
     exit 1
     ;;
 esac
