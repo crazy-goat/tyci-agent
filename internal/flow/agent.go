@@ -178,6 +178,10 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Repo != "" {
 		ctx = tools.WithRoleContext(ctx, filepath.Base(rc.Repo), role)
 	}
+	// tool_create writes the Lua tools of this run into the run folder.
+	if rc.RunDir != "" {
+		ctx = tools.WithRunDir(ctx, rc.RunDir)
+	}
 	// The job of this agent shows the path of its transcript (jobs.Job.Transcript).
 	ctx = context.WithValue(ctx, jobs.TranscriptCtxKey{}, spec.Transcript)
 	return r.spawnWithLimits(ctx, spec, rl.Limits)

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // preparingPrefix starts the m.active key of an issue whose run is being
@@ -309,6 +311,14 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 	return nil
 }
 
+// endRunTools removes the Lua tools that tool_create made in runDir when the
+// run ends. A paused run keeps them, as it keeps its adoption.
+func endRunTools(status, runDir string) {
+	if status != "paused" {
+		tools.RemoveRunTools(runDir)
+	}
+}
+
 // launch registers the run as active and runs it. m.mu must be held.
 func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool, do func(context.Context, *Runner) error) {
 	parent := m.base
@@ -342,6 +352,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 			}
 			m.mu.Unlock()
 			close(done)
+			endRunTools(st.Status, RunDir(info.Home, info.Name(), st.Run))
 			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason, Result: st.Result})
 		}()
 		defer func() {

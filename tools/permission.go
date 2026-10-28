@@ -62,6 +62,11 @@ func AllowedFor(p Policy, name string) bool {
 	if slices.Contains(alwaysAllowedTools, name) {
 		return true
 	}
+	if name == toolCreateName {
+		// No permission mode grants tool_create. A role gets it only when its
+		// tools list names it.
+		return slices.Contains(p.Tools, name)
+	}
 	if isMCPTool(name) {
 		// One rule, the same as ToolNames: an MCP tool is offered only when
 		// the list names it, or when there is no list, the mode is full and
