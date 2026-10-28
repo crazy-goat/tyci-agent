@@ -395,7 +395,7 @@ func loadLuaToolCtx(ctx context.Context, scriptPath string) (*LuaTool, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), luaToolLoadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, luaToolLoadTimeout)
 	defer cancel()
 
 	L := lua.NewState()
