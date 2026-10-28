@@ -84,7 +84,7 @@ func TestAddIssue_BranchesFromOrigin(t *testing.T) {
 		t.Fatal("test setup: unpushed commit did not move HEAD")
 	}
 
-	wt, err := AddIssue(context.Background(), t.TempDir(), work, 1, "main", true)
+	wt, err := AddIssue(context.Background(), t.TempDir(), work, "", 1, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestAddIssue_LocationUnderHome(t *testing.T) {
 	work, _ := newRepoWithOrigin(t)
 	home := t.TempDir()
 
-	wt, err := AddIssue(context.Background(), home, work, 7, "main", true)
+	wt, err := AddIssue(context.Background(), home, work, "", 7, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestAddRun_LocationAndBranchAfterRunID(t *testing.T) {
 	work, _ := newRepoWithOrigin(t)
 	home := t.TempDir()
 
-	wt, err := AddRun(context.Background(), home, work, "20261009-101010-0", "main", true)
+	wt, err := AddRun(context.Background(), home, work, "", "20261009-101010-0", "main", true)
 	if err != nil {
 		t.Fatalf("AddRun: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestAddRun_LocationAndBranchAfterRunID(t *testing.T) {
 	if wt.Branch != "run-20261009-101010-0" {
 		t.Fatalf("Branch = %q", wt.Branch)
 	}
-	if _, err := AddRun(context.Background(), home, work, "", "main", true); err == nil {
+	if _, err := AddRun(context.Background(), home, work, "", "", "main", true); err == nil {
 		t.Fatal("AddRun with an empty run id succeeded, want an error")
 	}
 }
@@ -156,13 +156,13 @@ func TestAddIssue_ExistingDirFails(t *testing.T) {
 	home := t.TempDir()
 	ctx := context.Background()
 
-	wt, err := AddIssue(ctx, home, work, 3, "main", true)
+	wt, err := AddIssue(ctx, home, work, "", 3, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
 	t.Cleanup(func() { _ = wt.Remove(context.Background()) })
 
-	_, err = AddIssue(ctx, home, work, 3, "main", true)
+	_, err = AddIssue(ctx, home, work, "", 3, "main", true)
 	if err == nil {
 		t.Fatal("second AddIssue for the same issue succeeded, want an error")
 	}
@@ -175,7 +175,7 @@ func TestAddIssue_ExistingBranchFails(t *testing.T) {
 	work, _ := newRepoWithOrigin(t)
 	gitRun(t, work, "branch", "issue-5")
 
-	_, err := AddIssue(context.Background(), t.TempDir(), work, 5, "main", true)
+	_, err := AddIssue(context.Background(), t.TempDir(), work, "", 5, "main", true)
 	if err == nil {
 		t.Fatal("AddIssue with an existing branch succeeded, want an error")
 	}
@@ -196,7 +196,7 @@ func TestAddIssue_FetchesLatestOrigin(t *testing.T) {
 	gitRun(t, other, "push", "-q", "origin", "main")
 	latest := gitOut(t, other, "rev-parse", "HEAD")
 
-	wt, err := AddIssue(context.Background(), t.TempDir(), work, 2, "main", true)
+	wt, err := AddIssue(context.Background(), t.TempDir(), work, "", 2, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestAddIssue_RejectsBadArgs(t *testing.T) {
 		{"empty home", "", 1, "main"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := AddIssue(ctx, tc.home, work, tc.issue, tc.branch, true); err == nil {
+			if _, err := AddIssue(ctx, tc.home, work, "", tc.issue, tc.branch, true); err == nil {
 				t.Fatalf("AddIssue(%q, %d, %q) succeeded, want an error", tc.home, tc.issue, tc.branch)
 			}
 		})
@@ -236,7 +236,7 @@ func TestAddIssue_FetchFailureIsError(t *testing.T) {
 	work, _ := newRepoWithOrigin(t)
 	gitRun(t, work, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "nonexistent.git"))
 
-	_, err := AddIssue(context.Background(), t.TempDir(), work, 4, "main", true)
+	_, err := AddIssue(context.Background(), t.TempDir(), work, "", 4, "main", true)
 	if err == nil {
 		t.Fatal("AddIssue with an unreachable origin succeeded, want an error")
 	}
@@ -266,7 +266,7 @@ func TestAddIssue_RunsSetupScriptOnceInWorktree(t *testing.T) {
 	runs := filepath.Join(t.TempDir(), "runs")
 	commitSetup(t, work, "#!/bin/sh\npwd -P >> '"+runs+"'\n", 0o755)
 
-	wt, err := AddIssue(context.Background(), t.TempDir(), work, 8, "main", true)
+	wt, err := AddIssue(context.Background(), t.TempDir(), work, "", 8, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestAddIssue_UntrustedSkipsSetupScript(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "marker")
 	commitSetup(t, work, "#!/bin/sh\necho ran > '"+marker+"'\n", 0o755)
 
-	wt, err := AddIssue(context.Background(), t.TempDir(), work, 16, "main", false)
+	wt, err := AddIssue(context.Background(), t.TempDir(), work, "", 16, "main", false)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestAddIssue_TrustedRunsSetupScript(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "marker")
 	commitSetup(t, work, "#!/bin/sh\necho ran > '"+marker+"'\n", 0o755)
 
-	wt, err := AddIssue(context.Background(), t.TempDir(), work, 17, "main", true)
+	wt, err := AddIssue(context.Background(), t.TempDir(), work, "", 17, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestAddIssue_SkipsNonExecutableSetupScript(t *testing.T) {
 	runs := filepath.Join(t.TempDir(), "runs")
 	commitSetup(t, work, "#!/bin/sh\necho ran >> '"+runs+"'\n", 0o644)
 
-	wt, err := AddIssue(context.Background(), t.TempDir(), work, 13, "main", true)
+	wt, err := AddIssue(context.Background(), t.TempDir(), work, "", 13, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestAddIssue_FailingSetupScriptFailsAndLeavesNothing(t *testing.T) {
 	commitSetup(t, work, "#!/bin/sh\necho 'setup broke here' >&2\nexit 1\n", 0o755)
 	home := t.TempDir()
 
-	_, err := AddIssue(context.Background(), home, work, 10, "main", true)
+	_, err := AddIssue(context.Background(), home, work, "", 10, "main", true)
 	if err == nil {
 		t.Fatal("AddIssue with a failing setup script succeeded, want an error")
 	}
@@ -387,7 +387,7 @@ func TestAddIssue_CancelledDuringSetupLeavesNothing(t *testing.T) {
 	}()
 
 	begin := time.Now()
-	_, err := AddIssue(ctx, home, work, 15, "main", true)
+	_, err := AddIssue(ctx, home, work, "", 15, "main", true)
 	elapsed := time.Since(begin)
 
 	if _, statErr := os.Stat(started); statErr != nil {
@@ -414,11 +414,11 @@ func TestRemove_IssueWorktreeKeepsParent(t *testing.T) {
 	home := t.TempDir()
 	ctx := context.Background()
 
-	wt11, err := AddIssue(ctx, home, work, 11, "main", true)
+	wt11, err := AddIssue(ctx, home, work, "", 11, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue 11: %v", err)
 	}
-	wt12, err := AddIssue(ctx, home, work, 12, "main", true)
+	wt12, err := AddIssue(ctx, home, work, "", 12, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue 12: %v", err)
 	}
@@ -464,13 +464,13 @@ func TestAddIssue_FromLinkedWorktreeNamesAfterMainCheckout(t *testing.T) {
 	work, _ := newRepoWithOrigin(t)
 	home := t.TempDir()
 
-	first, err := AddIssue(context.Background(), home, work, 7, "main", true)
+	first, err := AddIssue(context.Background(), home, work, "", 7, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
 	t.Cleanup(func() { _ = first.Remove(context.Background()) })
 
-	second, err := AddIssue(context.Background(), home, first.Dir, 8, "main", true)
+	second, err := AddIssue(context.Background(), home, first.Dir, "", 8, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue from a worktree: %v", err)
 	}
@@ -482,5 +482,35 @@ func TestAddIssue_FromLinkedWorktreeNamesAfterMainCheckout(t *testing.T) {
 	}
 	if second.Repo != first.Repo {
 		t.Fatalf("Repo = %q, want the main checkout %q", second.Repo, first.Repo)
+	}
+}
+
+// Two repositories whose checkouts have the same base name ("work") get their
+// own worktree dirs for the same issue number, because the key keeps the owner.
+func TestTwoReposTwoWorktreesNoCollision(t *testing.T) {
+	workA, _ := newRepoWithOrigin(t)
+	workB, _ := newRepoWithOrigin(t)
+	if filepath.Base(workA) != filepath.Base(workB) {
+		t.Fatalf("test setup: base names %q and %q must match", filepath.Base(workA), filepath.Base(workB))
+	}
+	home := t.TempDir()
+	ctx := context.Background()
+
+	a, err := AddIssue(ctx, home, workA, "acme+demo", 5, "main", true)
+	if err != nil {
+		t.Fatalf("AddIssue acme: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Remove(ctx) })
+	b, err := AddIssue(ctx, home, workB, "other+demo", 5, "main", true)
+	if err != nil {
+		t.Fatalf("AddIssue other: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Remove(ctx) })
+
+	if a.Dir == b.Dir {
+		t.Fatalf("both repos use worktree %s", a.Dir)
+	}
+	if want := filepath.Join(home, ".tyci", "worktrees", "acme+demo", "issue-5"); a.Dir != want {
+		t.Fatalf("Dir = %q, want %q", a.Dir, want)
 	}
 }

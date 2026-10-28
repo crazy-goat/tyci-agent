@@ -235,9 +235,9 @@ func reserveRunID(home, repoName, mainRoot string) (string, error) {
 // a run without one gets run-<run id>.
 func addRunWorktree(ctx context.Context, info RepoInfo, runID string, issue int) (*worktree.Worktree, error) {
 	if issue > 0 {
-		return worktree.AddIssue(ctx, info.Home, info.MainRoot, issue, info.DefaultBranch, info.Trusted)
+		return worktree.AddIssue(ctx, info.Home, info.MainRoot, info.Key(), issue, info.DefaultBranch, info.Trusted)
 	}
-	return worktree.AddRun(ctx, info.Home, info.MainRoot, runID, info.DefaultBranch, info.Trusted)
+	return worktree.AddRun(ctx, info.Home, info.MainRoot, info.Key(), runID, info.DefaultBranch, info.Trusted)
 }
 
 // ChatTools adapts a Manager to tools.WorkflowManager.

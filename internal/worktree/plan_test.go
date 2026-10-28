@@ -79,7 +79,7 @@ func TestAddPlan_IdempotentRemoveKeepsSiblings(t *testing.T) {
 	home := t.TempDir()
 	ctx := context.Background()
 
-	issue, err := AddIssue(ctx, home, work, 5, "main", true)
+	issue, err := AddIssue(ctx, home, work, "", 5, "main", true)
 	if err != nil {
 		t.Fatalf("AddIssue: %v", err)
 	}
