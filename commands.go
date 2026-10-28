@@ -192,6 +192,22 @@ func setupProjectLocalEnv(ctx context.Context, wd string, trusted, connectMCP, n
 	return ctx, shutdown
 }
 
+// openDebugLog opens the debug log unless --no-debug is set. It returns ctx
+// with the logger added, and the logger, or nil when no log is open. The
+// caller closes the logger. A failed open only prints a warning, so the
+// command runs without a log.
+func openDebugLog(cmd *cobra.Command, ctx context.Context) (context.Context, *debug.Logger) {
+	if noDebug, _ := cmd.Flags().GetBool("no-debug"); noDebug {
+		return ctx, nil
+	}
+	dl, err := debug.Init()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: debug log: %v\n", err)
+		return ctx, nil
+	}
+	return debug.NewContext(ctx, dl), dl
+}
+
 // toolsAdapter implements the tools.Runner interface by delegating to tools.RunTool.
 type toolsAdapter struct{}
 
@@ -294,21 +310,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 			connect.ProvidersJSONPath()+", as USD-per-million-tokens \"cost\": {\"input\":..., \"output\":...}.")
 	}
 
-	var ctx context.Context
-	var dl *debug.Logger
-	noDebug, _ := cmd.Flags().GetBool("no-debug")
-	if !noDebug {
-		var err error
-		dl, err = debug.Init()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: debug log: %v\n", err)
-			ctx = context.Background()
-		} else {
-			ctx = debug.NewContext(context.Background(), dl)
-		}
-	} else {
-		ctx = context.Background()
-	}
+	ctx, dl := openDebugLog(cmd, context.Background())
 
 	// Project-local environment: hooks (.tyci/hooks.json), Lua tools
 	// (.tyci/tools/*.lua), the local cron dir, and (subject to connectMCP

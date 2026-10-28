@@ -128,6 +128,58 @@ func TestAskUnfinished_ListsPausedRunUnchanged(t *testing.T) {
 	}
 }
 
+// AskUnfinished scans the run with a dead owner, then another tyci process
+// takes the run lock and claims the run before AskUnfinished pauses it. The
+// scan and the pause cannot be split by a sleep, so the Workflow call between
+// them (AskUnfinished calls it after the scan and before the pause) blocks
+// until the claim is written. The pause must re-read the state under the run
+// lock, see the live owner and leave the claimed run unchanged.
+func TestAskUnfinished_SkipsRunClaimedAfterScan(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	st := saveRun(t, e.home, 1, nil)
+	dir := RunDir(e.home, "r", st.Run)
+	scanned := make(chan struct{})
+	release := make(chan struct{})
+	workflow := e.m.Workflow
+	var once sync.Once
+	e.m.Workflow = func(info RepoInfo, name string) (*Workflow, error) {
+		once.Do(func() {
+			close(scanned)
+			<-release
+		})
+		return workflow(info, name)
+	}
+	done := make(chan struct{})
+	go func() {
+		e.m.AskUnfinished()
+		close(done)
+	}()
+	<-scanned
+
+	unlock, err := lockRun(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := loadRunState(t, e.home, st.Run)
+	if err := claim(dir, cur, os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	claimed := loadRunState(t, e.home, st.Run)
+
+	close(release)
+	<-done
+	select {
+	case s := <-e.notices:
+		t.Fatalf("notice %q, want none", s)
+	default:
+	}
+	after := loadRunState(t, e.home, st.Run)
+	if after.Status != "running" || after.Current != claimed.Current || after.PID != os.Getpid() || after.Resumed != claimed.Resumed || len(after.History) != len(claimed.History) {
+		t.Fatalf("claimed run changed: after = %+v, claimed = %+v", after, claimed)
+	}
+}
+
 func TestResume_DoesNotIncrementVisits(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, nil)
