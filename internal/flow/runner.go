@@ -253,6 +253,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Visit:         st.Visits[cur],
 				ArtifactDir:   artDir,
 				RunSoFar:      runSoFar(st, cur, r.RunDir),
+				PlanRejects:   planRejects(st),
 			}
 			// The failed-step context goes to the recovery roles (as before #385)
 			// and to the recovery states. Both are looked up in recoveryCaps.

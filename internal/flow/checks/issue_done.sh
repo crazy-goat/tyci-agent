@@ -4,8 +4,9 @@
 # permission, and it is unassigned or assigned to the account running this run.
 #
 # Env in:  TYCI_REPO (owner/name), TYCI_ISSUE, optional TYCI_ACCEPT_LABEL (default: accepted).
-# Keys:    go    work on the issue
-#          skip  do not work on the issue (including assignment to another account)
+# Keys:    go        work on the issue
+#          go-risky  work on the issue after its plan is approved: the issue has the label "risky"
+#          skip      do not work on the issue (including assignment to another account)
 # Errors:  any gh failure other than HTTP 404 exits non-zero WITHOUT a key; stderr then has a
 #          describe.sh block (RESULT: error) that says what failed.
 # Idempotent. Assignment is retained after the run ends and must be released manually. Never prints tokens.
@@ -25,6 +26,7 @@ if [ "$state" != "OPEN" ] || [ "$has_label" != "true" ]; then
     echo skip
     exit 0
 fi
+has_risky=$(jq -r '[.labels[].name] | index("risky") != null' <<<"$info")
 
 author=$(jq -r '.author.login // ""' <<<"$info")
 author="${author#app/}"
@@ -65,7 +67,11 @@ case "$status" in
             "check the issue permissions and 'gh auth status'; when assignment succeeds, return ok so the gate runs again"
         exit 1
     fi
-    echo go
+    if [ "$has_risky" = "true" ]; then
+        echo go-risky
+    else
+        echo go
+    fi
     ;;
 404)
     echo skip

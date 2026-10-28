@@ -26,8 +26,9 @@ func isPauseOracle(role, task string) bool {
 
 // savedOracleTasks are the oracle tasks whose answer is the text that the next
 // state reads from output.txt: the pick of the findings of a milestone-close run
-// (#206) and the split of a rebalance run (#208). Such an oracle writes no report.md.
-var savedOracleTasks = []string{"pick_critical", "rebalance_split"}
+// (#206), the split of a rebalance run (#208) and the plan of a risky issue (#214).
+// Such an oracle writes no report.md.
+var savedOracleTasks = []string{"pick_critical", "rebalance_split", "plan"}
 
 // isSavedOracle reports whether the agent is an oracle whose answer is saved as
 // output.txt (see savedOracleTasks).
