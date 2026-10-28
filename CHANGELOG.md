@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Display: the Runs tab keeps the selection on the same run when runs change state. The cursor no longer moves to another run when a run finishes and the rows reorder (#553).
+- Flow: a retried worker gets the error of the failed step in its task text, under "Run so far". The error is masked and cut to 2000 bytes (#445).
 - Workflows: the `rebalance` workflow shows the reason why the proposal is not valid when the split pauses after three invalid proposals. The ask text no longer says that a proposal is shown below in that case, and it says to answer `yes` only for a valid proposal (#740).
 
 ## [0.10.0] - 2026-10-14
