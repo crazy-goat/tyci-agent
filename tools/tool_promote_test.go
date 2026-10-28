@@ -166,9 +166,11 @@ func TestToolPromoteUnknownNameIsError(t *testing.T) {
 	if res.Success || !strings.Contains(res.Error, "no Lua tool named \"no_such_tool\"") {
 		t.Fatalf("an unknown tool was not an error: success=%v error=%q", res.Success, res.Error)
 	}
-	res = RunTool(promoteCtx(dir, wt), "tool_promote", promoteInput("../escape"))
-	if res.Success {
-		t.Fatal("a name with a path was accepted")
+	for _, bad := range []string{"../escape", "mcp_github_x", "1starts_with_digit"} {
+		res = RunTool(promoteCtx(dir, wt), "tool_promote", promoteInput(bad))
+		if res.Success || !strings.Contains(res.Error, "is not valid") {
+			t.Fatalf("the bad name %q was not refused as invalid: success=%v error=%q", bad, res.Success, res.Error)
+		}
 	}
 	if oracle.calls != 0 {
 		t.Fatalf("the oracle was called %d times for an unknown tool, want 0", oracle.calls)

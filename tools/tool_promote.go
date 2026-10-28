@@ -52,7 +52,7 @@ func (t *ToolPromoteTool) Name() string { return toolPromoteName }
 
 func (t *ToolPromoteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	name := strings.TrimSpace(stringParam(input, "name", ""))
-	if !toolCreateNameRE.MatchString(name) || strings.HasPrefix(name, "mcp_") {
+	if !validToolName(name) {
 		return validationf("name %q is not valid; use 1-64 lowercase letters, digits and underscores, starting with a letter, and not starting with mcp_", name)
 	}
 	dir := RunDirFrom(ctx)
