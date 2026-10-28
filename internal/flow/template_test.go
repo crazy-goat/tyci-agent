@@ -2,6 +2,7 @@ package flow
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -103,6 +104,42 @@ func TestIssueToMerge_MergeApprovedLoopNeedsHuman(t *testing.T) {
 		for _, next := range wf.States[name].On {
 			queue = append(queue, next)
 		}
+	}
+}
+
+// #810: an unknown result of the issue gate (check_done default) goes to the human state
+// ask_check, not to fixer. ask_check is human-only, so the oracle never answers it and the
+// run cannot reach code from the default edge without a human answer.
+func TestIssueToMerge_CheckDoneUnknownAsksHuman(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init("issue-to-merge", "", dir); err != nil {
+		t.Fatal(err)
+	}
+	wf, _, err := Lookup("issue-to-merge", t.TempDir(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &flowconfig.Config{
+		Models:       map[string]string{"m": "prov/model"},
+		DefaultModel: "m",
+		Roles: map[string]flowconfig.Role{
+			"worker": {Prompt: "W"}, "review": {Prompt: "R"}, "fixer": {Prompt: "F"}, "oracle": {Prompt: "O"},
+		},
+	}
+	if _, err := Validate(wf, cfg, wfResolver(wf)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	def := wf.States["check_done"].On["default"]
+	if def != "ask_check" {
+		t.Fatalf("check_done default -> %q, want ask_check", def)
+	}
+	ac := wf.States["ask_check"]
+	if !ac.Human || ac.Ask == "" || !maps.Equal(ac.On, map[string]string{"retry": "check_done", "stop": "end"}) {
+		t.Errorf("ask_check = %+v", ac)
+	}
+	r := &Runner{WF: wf, Agents: &fakeAgents{}}
+	if r.oracleMayAnswer(&RunState{Ask: &Ask{Message: "m"}}, ac) {
+		t.Error("the oracle may answer ask_check")
 	}
 }
 
@@ -314,6 +351,79 @@ func TestTemplatesValidate(t *testing.T) {
 		}
 		if len(paths) == 0 {
 			t.Fatalf("Init(%q) wrote no files", name)
+		}
+	}
+}
+
+// #214: a risky issue goes plan, plan_review, open_pr. The template validates, the human
+// state ask_plan is not answered by the oracle, and no route from the plan states reaches
+// the generic ask state.
+func TestIssueToMerge_PlanGate(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init("issue-to-merge", "", dir); err != nil {
+		t.Fatal(err)
+	}
+	wf, _, err := Lookup("issue-to-merge", t.TempDir(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &flowconfig.Config{
+		Models:       map[string]string{"m": "prov/model"},
+		DefaultModel: "m",
+		Roles: map[string]flowconfig.Role{
+			"worker": {Prompt: "W"}, "review": {Prompt: "R"}, "fixer": {Prompt: "F"}, "oracle": {Prompt: "O"},
+		},
+	}
+	if _, err := Validate(wf, cfg, wfResolver(wf)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got := wf.States["check_done"].On["go-risky"]; got != "open_pr_risky" {
+		t.Errorf("check_done go-risky -> %q", got)
+	}
+	if got := wf.States["open_pr_risky"].On; got["none"] != "plan" || got["found"] != "lock" {
+		t.Errorf("open_pr_risky on = %v", got)
+	}
+	if p := wf.States["plan"]; p.Agent != "oracle" || p.Task != "plan" || p.On["done"] != "plan_review" {
+		t.Errorf("plan = %+v", p)
+	}
+	pr := wf.States["plan_review"]
+	want := map[string]string{"APPROVE": "open_pr", "REJECT": "plan", "REJECT_LIMIT": "ask_plan", "DOUBT": "ask_plan", "default": "ask_plan"}
+	if pr.Agent != "oracle" || pr.Task != "plan_review" || !maps.Equal(pr.On, want) {
+		t.Errorf("plan_review = %+v, want on %v", pr, want)
+	}
+	ap := wf.States["ask_plan"]
+	if !ap.Human || ap.Ask == "" || ap.On["approve"] != "open_pr" || ap.On["replan"] != "plan" || ap.On["stop"] != "end" {
+		t.Errorf("ask_plan = %+v", ap)
+	}
+	r := &Runner{WF: wf, Agents: &fakeAgents{}}
+	if r.oracleMayAnswer(&RunState{Ask: &Ask{Message: "m"}}, ap) {
+		t.Error("the oracle may answer ask_plan")
+	}
+	// Walk the routes of the risky issue from open_pr_risky. An approval edge (APPROVE at
+	// plan_review, approve at ask_plan) is the only way to the code step. Every other
+	// route stays in the gate: the walk fails when it reaches fixer, oracle, ask or code.
+	gate := map[string]bool{"open_pr_risky": true, "plan": true, "plan_review": true, "ask_plan": true}
+	seen := map[string]bool{}
+	queue := []string{"open_pr_risky"}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		switch name {
+		case "fixer", "oracle", "ask", "code":
+			t.Fatalf("the plan gate reaches %q before APPROVE or a human answer", name)
+		}
+		if !gate[name] {
+			continue
+		}
+		for key, next := range wf.States[name].On {
+			if key == "APPROVE" || (name == "ask_plan" && key == "approve") {
+				continue
+			}
+			queue = append(queue, next)
 		}
 	}
 }

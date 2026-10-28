@@ -103,6 +103,13 @@ After a `yes`, the run does these steps:
 
 The `release` workflow never deletes or moves a tag. If a tag already exists, the run stops. Fix the problem by hand, then decide the next version.
 
+If the run pauses with a question after the CHANGELOG pull request is merged, answer with a `goto` form:
+
+- If the CHANGELOG pull request is merged and the tag is not yet created, answer `goto tag`.
+- If the release tag is already on origin, answer `goto wait`.
+
+Do not answer `retry` after the merge. The `[Unreleased]` section is empty then, so the worker cannot make a new CHANGELOG change.
+
 ## Checklist
 
 - [ ] Milestone has no open issues, CI is green

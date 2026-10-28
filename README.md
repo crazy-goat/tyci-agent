@@ -121,6 +121,8 @@ and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` ans
 step, the run pauses. The limits apply to the states named `fixer` and `oracle`, not to
 their agent role. With an open, unmerged PR, `stop`, `goto:merge` and a goto to a state that ends the run pause at `ask` for a human.
 
+The `issue-to-merge` workflow sends an unknown result of the gate `check_done` (the script `checks/issue_done.sh`) to the state `ask_check`. The run does not go to the fixer. A human answers `retry` to run the gate again, or `stop` to end the run. The oracle never answers this pause. A copied workflow does not get this change. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again.
+
 ### Pauses and the oracle
 
 The `oracle` agent answers a pause at an `ask` state before a human sees it. The oracle answers one of these forms. The key line is the first line that starts with one of them; the other lines give the reason:
@@ -134,6 +136,8 @@ The `oracle` agent answers a pause at an `ask` state before a human sees it. The
 Each oracle answer is a history step in `state.json` and a notice, for example `workflow run 606: oracle answered retry: CI runner has exception_ignore_args=On`. A run gets at most 2 oracle answers. Set `defaults.oracle_answers` in the workflow to change the limit. Set it to `0` to turn the oracle off.
 
 The oracle reads the task file `tasks/ask.md` of the workflow. `tyci workflow init` copies it when the template has an `ask` state. A workflow with an `ask` state that does not set `"human": true` needs this file, unless `defaults.oracle_answers` is `0`. `tyci workflow validate` reports the file when it is missing.
+
+An oracle state with `"saves": true` saves its answer as `output.txt` in its artifact dir, and the state writes no `report.md`. The next state reads the answer. The builtin `milestone-close` and `rebalance` templates set this flag. A workflow with no `saves` flag saves the answer of the tasks `pick_critical`, `rebalance_split` and `plan`. A check reads the path of the newest saved answer from `TYCI_ANSWER`.
 
 The oracle never answers these pauses. A human answers them:
 
@@ -157,7 +161,7 @@ selects the repository. A run in a trusted project then uses the workflow direct
 
 A file `prompts/<role>.md` sets the prompt of the agent states of that role. It replaces
 `roles.<role>.prompt` in `.tyci/config.json`. A state with its own `prompt` keeps that prompt.
-A role other than `worker`, `review`, `fixer` or `oracle` still needs a `roles` entry in
+A role other than `worker`, `review`, `fixer`, `oracle` or `planner` still needs a `roles` entry in
 `.tyci/config.json`.
 
 An agent state can set its own prompt for that state only:
@@ -183,7 +187,19 @@ Type `/<name>` and the params in the chat to start a workflow. For example, `/is
 - A workflow that does not load is listed with the reason. Its row cannot be taken into the input.
 - If a required param is missing, the run does not start. The model asks you for the value. Then the model starts the run.
 - `/workflow <name> [params]` always starts a workflow. Use it for a workflow whose name is a builtin command.
-- The builtin commands are `btw`, `compact`, `exit`, `msg`, `new`, `resume` and `workflow`. A workflow with one of these names is an error. tyci shows the error at start-up and in the list. Start that workflow with `/workflow <name>`.
+- The builtin commands are `btw`, `compact`, `exit`, `msg`, `new`, `plan`, `resume` and `workflow`. A workflow with one of these names is an error. tyci shows the error at start-up and in the list. Start that workflow with `/workflow <name>`.
+
+### Plan with a planner
+
+Type `/plan [topic]` in the chat to start a planner. The topic is the first message to the planner. Without a topic, the planner asks you what to plan. Each `/plan` starts one new planner. Several planners can run at the same time.
+
+- A planner works in its own git worktree under `~/.tyci/worktrees/`. It does not change your checkout.
+- A planner does not take a worker slot of the orchestrator.
+- A notice shows the job id and the worktree of the planner when it starts.
+- The planner stays open until tyci exits. You can resume it after its answer, in the agent view or with the chat tool `resume`. Each resumed turn works in the planner worktree, under the planner policy.
+- When tyci exits, a turn that still runs is stopped first. Then the worktree of a planner with no change is removed.
+- When tyci exits, the worktree of a planner that changed a file is kept, with its branch `plan-<id>`. A notice on the terminal shows the path.
+- The planner rules for issues (no milestone, no `accepted` label, an issue only after you say "create it") live only in its prompt, and its `bash` tool is not sandboxed, so tyci does not enforce these rules.
 
 ### Workflow proposals
 
@@ -243,6 +259,7 @@ Use the `workflow` commands to run and check a workflow from a terminal or a scr
 - `run` and `validate` take a workflow name, not a file path.
 - Use `--dir <path>` with `run` and `validate` to select the repository. The default is the current directory.
 - Use `--json` to print one JSON object on stdout. Progress and warnings go to stderr.
+- `run` writes a debug log to `~/.tyci/debug/`. Use `--no-debug` to turn it off.
 
 The `run` command waits until the run ends or pauses at an ask state. A paused run is not an error. The command then prints `waiting at ask state <name>` on stderr. Answer the paused run with `workflow_resume` in the chat.
 
@@ -356,7 +373,7 @@ The Bus tab lists the recent messages of the bus, newest first. One line shows t
 
 Click a tool or thinking line in the chat to show its body below the line. A tool body shows its arguments and its output, and a running tool shows its live output. A body of more than 20 lines shows only its newest lines, with a `... N more lines` line first. A thinking body shows the full text. Click the line again to fold the body. The hint at the end of the line says `- click to expand` or `- click to fold`. A click in an agent view works the same way. The header line of a block keeps its row when its body opens, also at the bottom of the transcript. The view then leaves the bottom and does not follow new output until you scroll down.
 
-Press Enter on a subagent in the Subagents list to open its conversation. Text you type there goes to that agent: a running agent reads it as a message before its next turn. A finished agent is resumed with the text, but only after a second Enter, which shows the context size and the estimated cost first; any other key cancels. A resumed agent is a side conversation, so its reply does not change its workflow run. Only an agent of a run in the `done` or `paused` state, or an agent of no run, can be resumed. The resume is refused when the worktree of the run is gone, or when a state file of a run cannot be read. The resumed job is listed under the job it continues, marked with `↻`.
+Press Enter on a subagent in the Subagents list to open its conversation. Text you type there goes to that agent: a running agent reads it as a message before its next turn. A finished agent is resumed with the text, but only after a second Enter, which shows the context size and the estimated cost first; any other key cancels. A resumed agent is a side conversation, so its reply does not change its workflow run. Only an agent of a run in the `done` or `paused` state, or an agent of no run, can be resumed. The resume is refused when the worktree of the run is gone, or when a state file of a run cannot be read. The resumed job is listed under the job it continues, marked with `↻`. A resumed role agent keeps its role policy and its worktree.
 
 ## Run transcripts
 
@@ -440,8 +457,9 @@ These flags work with `run` and `tui`:
 | `--history-file` | `""` | Path to history file (default: `~/.tyci/history`) |
 | `--session` | `""` | Session file path (default: auto-generated in `~/.tyci/sessions/`) |
 | `--no-session` | `false` | Disable session persistence |
-| `--debug` | `false` | Show HTTP request/response data |
 | `--no-debug` | `false` | Disable API request/response debug logging |
+
+The debug log is on by default. It is written to `~/.tyci/debug/`. Use `--no-debug` to turn it off.
 
 ### `run` flags
 
@@ -680,7 +698,7 @@ tyci remind cancel 3f9a1c2e      # Cancel one reminder by its id
 
 ### Display Modes
 
-- **run** — Plain text: only the final answer on stdout; errors, retry and fallback notices on stderr
+- **run** — Plain text: only the final answer on stdout; errors, retry, fallback and max-iterations notices on stderr
 - **tui** — Bubble Tea TUI with split-pane layout and mouse support
 
 #### `tyci completion`
@@ -718,6 +736,14 @@ have to be worked out again — a command, a rule the compiler does not enforce,
 decision and its reason. Writing the same name again corrects a note. Notes are
 capped (50 files, 8 KiB each) and the whole block is capped at 32 KiB, because
 all of it is re-sent on every request.
+
+**Role notes** — a workflow role keeps one private note for its own next
+session. The role writes it with `memory(scope="role", action="write", content="...")`
+and reads it with `memory(scope="role", action="read")`. The file is
+`~/.tyci/memory/<repo>/<role>.md`, outside the repository. `<repo>` is the base
+name of the repository directory. Only the role of the run reads its note. The
+note is loaded into the system prompt of that role. Tyci loads at most the last
+16 KiB of the file and logs a warning when the file is larger.
 
 ## Reply length and caching
 
@@ -786,11 +812,17 @@ Each flow role also takes these keys in the flow config:
    tries them in order when the model fails. Default: `[]` (no fallback).
 2. `roles.<name>.permission`: `read-only`, `worktree-write` or `full`. Default:
    `worktree-write`. `read-only` refuses `write`, `edit`, `bash` and `kill_job`.
-   `worktree-write` refuses writes outside the worktree. `full` has no such limit.
+   It also refuses every MCP tool. A `read-only` role does not see MCP tools in its
+   schema, even when `tools` names them.
+   `worktree-write` refuses `write` and `edit` outside the worktree. `full` has no such limit.
+   The limit does not cover `bash`. `bash` runs in the worktree, but it is not sandboxed.
+   A command with an absolute path or `cd` can change files outside the worktree.
+   A `worktree-write` run also gets one line in its system prompt that names the worktree
+   and says that `bash` is not sandboxed. A `read-only` or `full` run gets no such line.
 3. `roles.<name>.network`: `true` or `false`. Default: `true`. `false` removes
    the `web` tool and the MCP tools that are not listed in `tools`.
-   `bash` is not confined to the worktree, and `network: false` does not stop
-   network access from `bash`. Both change only when the OS sandbox ships (v0.11.0).
+   `network: false` does not stop network access from `bash`, because `bash` is not
+   sandboxed.
 4. `roles.<name>.tools`: the tools the role can use. Default: the tools of the
    permission. A role can only narrow the tools of the global config.
 5. `roles.<name>.limits.rounds`: the number of tool rounds. Default: `0`
@@ -1084,6 +1116,38 @@ startup or on `/reload`; a timeout is reported as a load error, and a reload
 keeps that file's previous tool. Each call has a 300s internal limit, covering
 both top-level code and the `run` function. An earlier caller deadline or
 cancellation still stops the call sooner.
+
+The `tool_create` tool makes a Lua tool while the agent works. Its `source` is a
+script in the same format as a `.lua` file. The script is written into the run
+folder, and the tool is registered at once. Call the new tool with
+`tool("<name>", {...})` in the `lua` tool. The tool is removed when the run or
+the session ends. The script and each test run under a 2 s limit. The optional
+`tests` input is a list of `{args, expect}`: each case runs the tool with `args`, and
+its result must contain `expect`. If a case fails, the script is removed and nothing
+is registered. The main chat has `tool_create`. A workflow role has it only
+when its `tools` list names it. A role or named agent can call a tool it created only
+through `tool()` in the `lua` tool, and only when its `tools` list names the new tool.
+The main chat sees a tool made in the session on its next request. A workflow role or
+named agent keeps the tool list it had at spawn, so it does not see a new tool until
+it starts again.
+
+When a paused run starts again, also after a tyci restart, tyci loads the tool files
+of its run folder again. A file that fails the same checks as `tool_create` is skipped
+with a warning, and the other files load. When tyci starts, it removes the session
+folders of tyci processes that have exited. A session folder name holds the PID of its
+owner. A folder without a PID, made by an older tyci, is removed after 24 hours.
+
+The `tool_promote` tool copies a Lua tool from the run folder into the project. It
+writes `.tyci/tools/<name>.lua` in the current worktree. Before the copy, a read-only
+safety review reads the script. The copy happens only when the whole answer is exactly
+`SAFE`. Any other answer copies nothing. A `SAFE` answer with more text is also refused.
+A refused call fails, and its error gives the reason. Then the chat asks the user. The
+tool never commits, pushes or merges, and it does not overwrite an existing file. It
+runs only in a git worktree: a linked worktree or a submodule. It does not run in the
+main checkout. The main chat has
+`tool_promote`. A workflow role has it only when its `tools` list names it and its
+permission is `worktree-write` or `full`. A `read-only` role never gets it, even when
+its list names it.
 
 ## Write freshness
 

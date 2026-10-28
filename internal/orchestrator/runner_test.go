@@ -91,8 +91,9 @@ func TestFlowRunnerRejectsOtherInputs(t *testing.T) {
 
 type fakeAdoptManager struct {
 	fakeManager
-	paused bool
-	taken  bool
+	paused   bool
+	taken    bool
+	released int
 }
 
 func (m *fakeAdoptManager) Adoptable() []int { return []int{7} }
@@ -104,12 +105,22 @@ func (m *fakeAdoptManager) AdoptableResumed() []int {
 	return []int{7}
 }
 
+func (m *fakeAdoptManager) ReleaseAdopted() { m.released++ }
+
 func (m *fakeAdoptManager) Adopt(issue int) (string, bool, bool) {
 	if issue != 7 || m.taken {
 		return "", false, false
 	}
 	m.taken = true
 	return "20260101-000000-7", m.paused, true
+}
+
+func TestFlowRunnerReleaseAdoptedReachesManager(t *testing.T) {
+	m := &fakeAdoptManager{}
+	NewRunner(m).(Adopter).ReleaseAdopted()
+	if m.released != 1 {
+		t.Fatalf("ReleaseAdopted reached the manager %d times, want 1", m.released)
+	}
 }
 
 func TestFlowRunnerAdoptPausedRunAsksAtOnce(t *testing.T) {

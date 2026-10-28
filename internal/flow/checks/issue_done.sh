@@ -4,8 +4,9 @@
 # permission, and it is unassigned or assigned to the account running this run.
 #
 # Env in:  TYCI_REPO (owner/name), TYCI_ISSUE, optional TYCI_ACCEPT_LABEL (default: accepted).
-# Keys:    go    work on the issue
-#          skip  do not work on the issue (including assignment to another account)
+# Keys:    go        work on the issue
+#          go-risky  work on the issue after its plan is approved: the issue has the label "risky"
+#          skip      do not work on the issue (including assignment to another account)
 # Errors:  any gh failure other than HTTP 404 exits non-zero WITHOUT a key; stderr then has a
 #          describe.sh block (RESULT: error) that says what failed.
 # Idempotent. Assignment is retained after the run ends and must be released manually. Never prints tokens.
@@ -25,6 +26,7 @@ if [ "$state" != "OPEN" ] || [ "$has_label" != "true" ]; then
     echo skip
     exit 0
 fi
+has_risky=$(jq -r '[.labels[].name] | index("risky") != null' <<<"$info")
 
 author=$(jq -r '.author.login // ""' <<<"$info")
 author="${author#app/}"
@@ -48,7 +50,7 @@ case "$status" in
     if ! login=$(gh api user --jq .login); then
         describe error "could not read the authenticated GitHub account" \
             "gh is not logged in or the GitHub API is unavailable" \
-            "check 'gh auth status'; when the API answers, return ok so the gate runs again"
+            "check 'gh auth status'; when the API answers, answer retry so the gate runs again"
         exit 1
     fi
     assignees=$(jq -r '[.assignees[]?.login] | .[]' <<<"$info")
@@ -62,10 +64,14 @@ case "$status" in
     if ! gh issue edit "$TYCI_ISSUE" -R "$TYCI_REPO" --add-assignee "$login"; then
         describe error "could not assign issue #$TYCI_ISSUE to '$login'" \
             "the account may lack permission to assign issues, or the GitHub API may be unavailable" \
-            "check the issue permissions and 'gh auth status'; when assignment succeeds, return ok so the gate runs again"
+            "check the issue permissions and 'gh auth status'; when assignment succeeds, answer retry so the gate runs again"
         exit 1
     fi
-    echo go
+    if [ "$has_risky" = "true" ]; then
+        echo go-risky
+    else
+        echo go
+    fi
     ;;
 404)
     echo skip
@@ -74,7 +80,7 @@ case "$status" in
     echo "issue_done: unexpected response from permission API: ${status:-none}" >&2
     describe error "the GitHub permission API returned HTTP ${status:-none} for issue author '$author' of #$TYCI_ISSUE" \
         "a GitHub outage, a rate limit, or gh is not logged in" \
-        "check 'gh auth status' and 'gh api repos/$TYCI_REPO/collaborators/$author/permission'; when it answers 200 or 404, return ok so the gate runs again"
+        "check 'gh auth status' and 'gh api repos/$TYCI_REPO/collaborators/$author/permission'; when it answers 200 or 404, answer retry so the gate runs again"
     exit 1
     ;;
 esac

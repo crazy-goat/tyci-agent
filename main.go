@@ -16,6 +16,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/rolememory"
 	"github.com/crazy-goat/tyci-agent/internal/watchdog"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/providers"
@@ -93,6 +94,26 @@ type resumableEntry struct {
 	// a chain (for example after a report reminder), so the run guard looks
 	// for every id of the chain (see runIDsOf). Empty means the job alone.
 	chain []string
+
+	// policy is the tool policy of the stashed run (tools.PolicyOf), nil when
+	// the run had none. jobResumerAdapter.Resume applies it again, so a role
+	// job keeps its tool gate and write root when a caller outside the role
+	// resumes it. Nil means no policy, not the zero Policy.
+	policy *tools.Policy
+
+	// workdir is the working directory of the stashed run (tools.Workdir),
+	// empty for the process directory. A resumed run starts in it, so a role
+	// job writes in its own worktree.
+	workdir string
+}
+
+// runPolicy returns the tool policy that ctx carries, nil when it carries none.
+func runPolicy(ctx context.Context) *tools.Policy {
+	p, ok := tools.PolicyOf(ctx)
+	if !ok {
+		return nil
+	}
+	return &p
 }
 
 // resumableMu guards resumable and resumableOrder.
@@ -373,7 +394,25 @@ func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model 
 			break
 		}
 	}
-	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system, hasAskParent, tools.Workdir(ctx)), opts)
+	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system, hasAskParent, tools.Workdir(ctx))+roleMemorySection(ctx), opts)
+}
+
+// roleMemorySection returns the role memory of the agent in ctx for its system
+// prompt, or "" when the agent has no role or no note yet. It is added after
+// the standard prompt, so the note is the last section the model reads. The
+// role comes from the context and not from the prompt text, because the
+// prompt carries the role body, not the role name.
+func roleMemorySection(ctx context.Context) string {
+	repo, role, ok := tools.RoleFromContext(ctx)
+	if !ok {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	block := rolememory.Block(home, repo, role, debug.FromContext(ctx))
+	if block == "" {
+		return ""
+	}
+	return "\n---\nYour notes from earlier sessions of this role:\n" + block + "\n"
 }
 
 // run executes one subagent turn and normalizes the outcome into a result the
@@ -494,7 +533,6 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		// comment in tools/tool.go.
 		MaxIterations: opts.MaxIterationsCap,
 		MaxToolCalls:  opts.MaxToolCalls,
-		Debug:         false,
 		Tools:         &subagentToolRunner{allowed: opts.Tools, scoutMode: opts.ScoutMode},
 		Schema:        schema,
 		Fallbacks:     fallbacks,
@@ -568,7 +606,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 			defer func() { _ = w.Close() }()
 		}
 	} else if jobID != "" {
-		if cs := openChildSession(msgs, mc.Model(), mc.Provider(), jobID); cs != nil {
+		if cs := openChildSession(msgs, mc.Model(), mc.Provider(), jobID, childWorkdir(ctx)); cs != nil {
 			cfg.Session = cs
 			defer func() { _ = cs.Close() }()
 		}
@@ -594,7 +632,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// tool call can continue this exact conversation as a brand-new job. See
 	// stashResumable's doc comment for the (bounded) retention policy.
 	if jobID != "" && (err == nil || truncated || deadlineExceeded || stoppedByUser) {
-		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(ctx), depth: depth})
+		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(ctx), depth: depth, policy: runPolicy(ctx), workdir: tools.Workdir(ctx)})
 	}
 
 	if stoppedByUser {
@@ -611,6 +649,11 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		// partial success, like the iteration cap.
 		return text + "\n\n[note: subagent stopped at its tool call limit; the result above may be incomplete.]",
 			fmt.Errorf("%w: result may be incomplete", tools.ErrSubagentToolCalls)
+	}
+	if truncated {
+		// The cap warning is a notice, not text. Keep it in the result as
+		// before, so a child that wrote no text still reports the cap.
+		text = appendMaxIterationsNotice(text, cfg.MaxIterations)
 	}
 	if truncated || deadlineExceeded {
 		// agentRunner configures an ORDINARY child run without a
@@ -643,6 +686,13 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// scratch. resumeHint itself already no-ops when jobID is empty (no job
 	// registry — tests only), so nothing here needs to duplicate that check.
 	return text + resumeHint(jobID), nil
+}
+
+// appendMaxIterationsNotice adds the iteration-cap notice to a run's text on
+// the line after the text, and trims the result. The layout matches the old
+// result, when the warning was sent through Text and then trimmed.
+func appendMaxIterationsNotice(text string, maxIterations int) string {
+	return strings.TrimSpace(text + "\n" + agent.MaxIterationsNotice(maxIterations))
 }
 
 // subagentStoppedMessage builds the (content, error) pair run() returns when
@@ -823,6 +873,7 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 	//     dispatches too, so a script cannot reach a tool its agent was
 	//     denied, or spawn a grandchild.
 	ctx = tools.WithToolGate(ctx, tools.DenySubagentRecursion())
+	ctx = tools.WithToolGate(ctx, tools.SubagentRoleToolGate(ctx, r.allowed))
 	if gate != nil {
 		ctx = tools.WithToolGate(ctx, gate)
 	}

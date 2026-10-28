@@ -68,9 +68,12 @@ func init() {
 	rootCmd.PersistentFlags().String("history-file", "", "Path to history file (default: ~/.tyci/history)")
 	rootCmd.PersistentFlags().String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
 	rootCmd.PersistentFlags().Bool("no-session", false, "Disable session persistence")
-	rootCmd.PersistentFlags().Bool("debug", false, "Show HTTP request/response data")
+	rootCmd.PersistentFlags().Bool("debug", false, "Deprecated, has no effect")
 	rootCmd.PersistentFlags().Bool("no-debug", false, "Disable API request/response debug logging")
 	rootCmd.PersistentFlags().Bool("no-mcp", false, "Don't connect configured MCP servers (~/.tyci/mcp.json)")
+	// --debug stays accepted so that old scripts do not fail with "unknown flag".
+	// The debug log is always on, so the flag does nothing.
+	_ = rootCmd.PersistentFlags().MarkDeprecated("debug", "it has no effect; the debug log in ~/.tyci/debug/ is always on, use --no-debug to turn it off")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(tuiCmd)
@@ -192,6 +195,33 @@ func setupProjectLocalEnv(ctx context.Context, wd string, trusted, connectMCP, n
 	return ctx, shutdown
 }
 
+// openDebugLog opens the debug log unless --no-debug is set. It returns ctx
+// with the logger added, and the logger, or nil when no log is open. The
+// caller closes the logger. A failed open only prints a warning, so the
+// command runs without a log.
+func openDebugLog(cmd *cobra.Command, ctx context.Context) (context.Context, *debug.Logger) {
+	if noDebug, _ := cmd.Flags().GetBool("no-debug"); noDebug {
+		return ctx, nil
+	}
+	dl, err := debug.Init()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: debug log: %v\n", err)
+		return ctx, nil
+	}
+	return debug.NewContext(ctx, dl), dl
+}
+
+// closeDebugLog closes the debug log. A nil log does nothing. A failed close
+// only prints a warning.
+func closeDebugLog(dl *debug.Logger) {
+	if dl == nil {
+		return
+	}
+	if err := dl.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
+	}
+}
+
 // toolsAdapter implements the tools.Runner interface by delegating to tools.RunTool.
 type toolsAdapter struct{}
 
@@ -294,21 +324,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 			connect.ProvidersJSONPath()+", as USD-per-million-tokens \"cost\": {\"input\":..., \"output\":...}.")
 	}
 
-	var ctx context.Context
-	var dl *debug.Logger
-	noDebug, _ := cmd.Flags().GetBool("no-debug")
-	if !noDebug {
-		var err error
-		dl, err = debug.Init()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: debug log: %v\n", err)
-			ctx = context.Background()
-		} else {
-			ctx = debug.NewContext(context.Background(), dl)
-		}
-	} else {
-		ctx = context.Background()
-	}
+	ctx, dl := openDebugLog(cmd, context.Background())
 
 	// Project-local environment: hooks (.tyci/hooks.json), Lua tools
 	// (.tyci/tools/*.lua), the local cron dir, and (subject to connectMCP
@@ -317,7 +333,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	ctx, shutdown := setupProjectLocalEnv(ctx, wd, trusted, connectMCP, noMCP)
 	rememberProjectSetup(wd, trusted, connectMCP && !noMCP)
 
-	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	// The flag wins when given, otherwise the global config, otherwise 0 —
 	// which each connector reads as "your default".
@@ -330,9 +345,8 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		Dispatch:           agent.NewDispatcher(appBus, orchestratorAddr, agent.LoadTyciConfig().ToolsSettings()),
 		MaxRetries:         maxRetries,
 		MaxIterations:      maxIterations,
-		Debug:              debugFlag,
 		Tools:              toolsAdapter{},
-		Schema:             tools.GetTopLevelToolsSchemaJSON(),
+		SchemaFunc:         tools.GetTopLevelToolsSchemaJSON,
 		MaxTokens:          maxTokens,
 		NoPromptCache:      !agent.PromptCacheEnabled(),
 		PendingTodos:       tools.PendingTodos,
@@ -378,6 +392,21 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		}
 	}
 	cfg.Session = sess
+
+	// The Lua tools that the chat makes with tool_create live in a session
+	// folder. shutdown removes the folder when the session ends. A folder that a
+	// tyci that has exited left behind is removed first.
+	tools.RemoveStaleSessionFolders(os.TempDir())
+	if sessionDir, endSession, err := tools.NewSessionFolder(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: session folder: %v (tool_create is off)\n", err)
+	} else {
+		ctx = tools.WithRunDir(ctx, sessionDir)
+		prevShutdown := shutdown
+		shutdown = func() {
+			prevShutdown()
+			endSession()
+		}
+	}
 
 	historyFile, _ := cmd.Flags().GetString("history-file")
 	if historyFile == "" {
@@ -461,11 +490,7 @@ var runCmd = &cobra.Command{
 		// debug log's Close() on the failed and canceled paths too.
 		cleanup := func() {
 			dropLeftoverNotices(os.Stderr)
-			if dl != nil {
-				if err := dl.Close(); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
-				}
-			}
+			closeDebugLog(dl)
 			shutdown()
 		}
 		defer cleanup()
@@ -507,13 +532,7 @@ var tuiCmd = &cobra.Command{
 			return err
 		}
 		defer shutdown()
-		if dl != nil {
-			defer func() {
-				if err := dl.Close(); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
-				}
-			}()
-		}
+		defer closeDebugLog(dl)
 
 		// Compute context counts for the top status bar.
 		toolsCount := len(tools.GetAllToolsSchema())
@@ -633,14 +652,18 @@ var tuiCmd = &cobra.Command{
 		cfg = orchestratorChatConfig(cfg, orchStart)
 		// Chat tools workflow_start/status/resume exist only in tui:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
-		// Set them before the schema snapshot, or the model never sees them.
+		// The schema is read on every request (cfg.SchemaFunc), so they are offered.
 		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
-		cfg.Schema = tools.GetTopLevelToolsSchemaJSON()
+		cfg.Schema = nil
+		cfg.SchemaFunc = tools.GetTopLevelToolsSchemaJSON
 		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath)
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)
 		startRunLogHousekeeping(ctx)
 		resumeWorkflowRuns()
+		// Planner sessions stay open until tyci exits. Defers run in reverse
+		// order, so they close before workflowManager.Shutdown and shutdown.
+		defer closePlannerSessions(os.Stdout)
 		runTUI(cond, tuiDisp, ctx, orchStart)
 		return nil
 	},

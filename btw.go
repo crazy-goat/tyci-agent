@@ -249,14 +249,35 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 	// new job appends can ever alias or mutate the stored transcript.
 	forked := forkMessagesForBtw(entry.msgs, task)
 
+	// Every caller gets the same scope here: the agent view, the resume tool
+	// and the flow. The new job runs in the worktree of the stashed run, under
+	// its tool policy, so a caller outside the role cannot widen it. A planner
+	// turn is the one exception: its planner session is the authority, so its
+	// worktree and planner policy win.
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	workdir, policy := entry.workdir, entry.policy
+	owner, root, owned := plannerOwnerOf(jobID)
+	if owned {
+		workdir, policy = owner.session.Worktree, &owner.policy
+		if parentID == "" {
+			parentID = root
+		}
+	}
+	ctx = tools.WithWorkdir(ctx, workdir)
+	if policy != nil {
+		ctx = tools.WithPolicy(ctx, *policy)
+	}
+
 	// Detach from the tool call's context so the resumed job keeps running after
 	// Resume returns. The registry still owns cancellation for kill_job; there
 	// is deliberately no subagent-specific deadline.
 	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
-	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 	job := a.reg.Start(jobCtx, task, jobs.KindSubagent, parentID, func(runCtx context.Context, newJobID string) (string, bool, error) {
 		defer cancel()
+		if owned {
+			defer unregisterPlannerTurn(newJobID)
+		}
 		// newJobID is also this resumed conversation's todo-agent id (see
 		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —
 		// mark it done so its list becomes eligible for eviction once the
@@ -352,11 +373,20 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 			// conversation does not change how deep it is nested, so a
 			// chained resume off of newJobID must restore the exact same
 			// depth this one did, not silently reset to 0.
-			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx), depth: entry.depth, chain: resumeChain(entry, jobID, newJobID)})
+			// The scope is the one this run got (see above), so a chained
+			// resume keeps the worktree and the policy one hop later too.
+			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx), depth: entry.depth, chain: resumeChain(entry, jobID, newJobID), policy: policy, workdir: workdir})
 		}
 
 		return text, truncated, err
 	})
+	if owned {
+		// Registered after Start, so a turn that ended at once is not kept.
+		registerPlannerTurn(job.ID, root)
+		if !a.reg.IsLive(job.ID) {
+			unregisterPlannerTurn(job.ID)
+		}
+	}
 
 	return jobHandleAdapter{job}, nil
 }
@@ -527,7 +557,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		// Timeout and kill_job still leave useful partial work. Preserve it so
 		// the parent can resume the promoted conversation instead of losing it.
 		if err == nil || truncated || deadlineExceeded || stopped {
-			stashResumable(jobID, resumableEntry{msgs: msgs, mc: client, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx), depth: promotedDepth})
+			stashResumable(jobID, resumableEntry{msgs: msgs, mc: client, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx), depth: promotedDepth, policy: runPolicy(runCtx), workdir: tools.Workdir(runCtx)})
 		}
 		return text, truncated, err
 	})

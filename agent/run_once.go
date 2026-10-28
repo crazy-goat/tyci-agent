@@ -59,12 +59,15 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 		ps.Phase("sending")
 	}
 
+	schema := cfg.Schema
+	if schema == nil && cfg.SchemaFunc != nil {
+		schema = cfg.SchemaFunc()
+	}
 	events, streamErr := mc.Stream(streamCtx, connector.Request{
 		Model:         mc.Model(),
 		System:        cfg.System,
 		Messages:      *msgs,
-		Tools:         cfg.Schema,
-		Debug:         cfg.Debug,
+		Tools:         schema,
 		Temperature:   cfg.Temperature,
 		MaxTokens:     cfg.MaxTokens,
 		Effort:        cfg.Effort,

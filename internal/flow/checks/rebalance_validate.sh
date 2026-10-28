@@ -4,13 +4,15 @@
 # in milestones.json or be listed in create, and a title in create must not exist yet. Titles have
 # the form vX.Y.Z. The split is never trusted: a rule that fails stops the run from applying it.
 #
-# Env in:  TYCI_REPO, TYCI_RUN_DIR.
+# Env in:  TYCI_REPO, TYCI_RUN_DIR, TYCI_ANSWER (optional).
 # Input:   $TYCI_RUN_DIR/candidates.json and milestones.json (rebalance_collect.sh), and the answer of
-#          the split step, the newest $TYCI_RUN_DIR/artifacts/*-split/output.txt:
+#          the split step: $TYCI_ANSWER or, when it is not set, the newest
+#          $TYCI_RUN_DIR/artifacts/*-split/output.txt. The answer is
 #          {"assign":{"vX.Y.Z":[N,...]},"create":["vX.Y.Z",...]}. A code fence line in the answer is ignored.
 # Writes:  on ok, $TYCI_RUN_DIR/proposal.json (the validated copy, read by rebalance_apply.sh) and
 #          ask-table.md (a table with every candidate issue once, shown in the ask message). On invalid,
-#          validate.err with the reason. Both copies are removed when a split is invalid, so a stale proposal is never applied.
+#          validate.err with the reason, and ask-table.md with the reason too (the ask message shows it when
+#          the max_visits pause ends the run). proposal.json is removed when a split is invalid, so a stale proposal is never applied.
 # Keys:    ok       the split is valid and the proposal is written
 #          invalid  the split breaks a rule; validate.err has the reason (the split step runs again)
 #          fail     an input is missing or not JSON, or the answer has the wrong form
@@ -32,6 +34,11 @@ fi
 shopt -s nullglob
 answers=("$run"/artifacts/*-split/output.txt)
 shopt -u nullglob
+if [ -n "${TYCI_ANSWER:-}" ]; then
+    # The runner names the answer of the split step, also when the state has another name (#784).
+    answers=()
+    if [ -f "$TYCI_ANSWER" ]; then answers=("$TYCI_ANSWER"); fi
+fi
 if [ "${#answers[@]}" -eq 0 ]; then
     describe fail "the split step left no answer (output.txt)" \
         "the oracle did not finish the split step" \
@@ -77,8 +84,13 @@ problem=$(jq -r --argjson c "$cands" --argjson m "$miles" '
     ' <<<"$plan")
 
 if [ -n "$problem" ]; then
-    rm -f "$run/proposal.json" "$run/ask-table.md"
+    rm -f "$run/proposal.json"
     printf '%s\n' "$problem" >"$run/validate.err"
+    {
+        echo "The proposal is not valid. The last split broke this rule:"
+        echo
+        head -c 500 "$run/validate.err"
+    } >"$run/ask-table.md"
     describe invalid "the split is not valid: $problem" \
         "the oracle broke one rule of the split" \
         "return invalid; the split step runs again and reads validate.err"

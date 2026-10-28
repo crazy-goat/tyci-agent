@@ -56,6 +56,10 @@ type State struct {
 	// Guard means the state needs a human before an oracle may send the run
 	// here (#562). See isGuarded.
 	Guard bool `json:"guard,omitempty"`
+	// Saves means the oracle answer of this agent state is the text of the next state:
+	// the runner saves it as output.txt and the state writes no report.md (#784).
+	// See savesAnswer.
+	Saves bool `json:"saves,omitempty"`
 	End   bool `json:"end,omitempty"`
 	// Result is the outcome of an end state, for example "merged" or "declined".
 	// Only an end state may set it. An empty Result ends the run as "done".
@@ -223,6 +227,7 @@ type RunContext struct {
 	Run           string // run id; names the agent job "<run>/<role>"
 	Note          string // orchestrator note for the worker
 	Input         string // text input of a RunText run
+	ReadOnly      bool   // text run: the role gets read-only permission, whatever its config says
 	StateName     string
 	Workflow      string // workflow name
 	// Prompt overrides the role prompt (the state "prompt"). Empty: the role prompt.
@@ -237,7 +242,9 @@ type RunContext struct {
 	// write report.md there. Empty when the runner has no run dir.
 	ArtifactDir string
 	// RunSoFar lists the steps since the last visit of this state (all steps
-	// on the first visit) with their artifact files.
+	// on the first visit) with their artifact files. The last visit of this
+	// state is listed too when it failed. A failed step has an "error:" line
+	// under it, masked and cut to 2000 bytes.
 	RunSoFar string
 	// Failed, FailedKey and FailedDir name the last check step, its key and its
 	// absolute artifact dir. Set only for the fixer and oracle roles (#369).
@@ -247,6 +254,11 @@ type RunContext struct {
 	Pause, Goto string
 	// Stats is filled by the agent runner when the agent ends. Nil: not wanted.
 	Stats *StepStats
+	// Saves is the State.Saves of the agent state (see savesAnswer). Only an oracle answer is saved.
+	Saves bool
+	// PlanRejects is the number of REJECT answers of the plan review since the last human
+	// answer, not counting this one (see planReviewKey).
+	PlanRejects int
 	// Summary is the text of the previous agent when this agent replaces it (#202).
 	// It is empty for a normal agent.
 	Summary string

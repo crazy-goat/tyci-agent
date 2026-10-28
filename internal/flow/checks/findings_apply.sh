@@ -7,9 +7,10 @@
 # and the doubtful numbers are listed on stderr, so the pause notice shows them.
 # Every moved number is appended to $TYCI_RUN_DIR/moved.txt and skipped by later runs (idempotent).
 #
-# Env in:  TYCI_REPO, TYCI_RUN_DIR, TYCI_PARAM_MILESTONE (the milestone title).
-# Input:   $TYCI_RUN_DIR/candidates.json (findings_collect.sh) and the answer of the pick step, the
-#          newest $TYCI_RUN_DIR/artifacts/*-pick/output.txt: {"critical":[N,...],"doubt":[N,...]}.
+# Env in:  TYCI_REPO, TYCI_RUN_DIR, TYCI_PARAM_MILESTONE (the milestone title), TYCI_ANSWER (optional).
+# Input:   $TYCI_RUN_DIR/candidates.json (findings_collect.sh) and the answer of the pick step:
+#          $TYCI_ANSWER or, when it is not set, the newest $TYCI_RUN_DIR/artifacts/*-pick/output.txt.
+#          The answer is {"critical":[N,...],"doubt":[N,...]}.
 #          A code fence line in the answer is ignored.
 # Keys:    done   nothing doubtful is left to move
 #          doubt  doubtful findings wait for a human answer (listed on stderr)
@@ -34,6 +35,11 @@ fi
 shopt -s nullglob
 answers=("$run"/artifacts/*-pick/output.txt)
 shopt -u nullglob
+if [ -n "${TYCI_ANSWER:-}" ]; then
+    # The runner names the answer of the pick step, also when the state has another name (#784).
+    answers=()
+    if [ -f "$TYCI_ANSWER" ]; then answers=("$TYCI_ANSWER"); fi
+fi
 if [ "${#answers[@]}" -eq 0 ]; then
     describe fail "the pick step left no answer (output.txt)" \
         "the oracle did not finish the pick step" \
@@ -75,7 +81,7 @@ while IFS= read -r n; do
     move "$n"
 done < <(jq -r '.critical[]' <<<"$plan")
 
-doubt=$(jq -r '.doubt | join(" #")' <<<"$plan")
+doubt=$(jq -r '.doubt | map(tostring) | join(" #")' <<<"$plan")
 if [ -n "$doubt" ]; then
     approved=false
     if [ -f "$run/approvals.txt" ] && awk -F'\t' '$2 == "ask" && $3 == "yes" { found = 1 } END { exit !found }' "$run/approvals.txt"; then

@@ -14,8 +14,13 @@ that loop once. Every command can be copied as it is.
   seconds of each other can both assign the issue. The assignment stays after the run ends.
   Release it as described in section 9, step 6.
 - The merge waits for the required check `ci-ok`. Push uses explicit refs.
+- An issue with the label `risky` gets a plan before any code is written. An oracle
+  reviews the plan. After a doubt, or after three rejected plans, a human answers the
+  state `ask_plan`.
 - A pull request that touches `.github/**`, `.tyci/**` or `internal/flow/checks/**`
   stops at `ask_protected` before the merge. A human answers `approve` or `stop`.
+- If the gate script fails (for example, gh is down) or prints an unknown result, the run
+  pauses at `ask_check`. A human answers `retry` to run the gate again, or `stop` to end the run.
 - One run works at a time.
 
 ## 1. Install the binary
@@ -53,7 +58,7 @@ The file accepts only the keys shown here and `check_timeout_sec`.
 - `models` maps an alias to a `provider/model` name. Aliases are optional: `default_model` and a role's `model` may also be a direct `provider/model` name (for example, `nexos/GPT 5.6 Luna`).
 - `default_model` is used by a role that has no `model`.
 - `effort` on a role sets the reasoning effort (`low`, `medium`, `high`, `xhigh` or `max`). `default_effort` is used by a role that has no `effort`. A `?reasoning=` option in the model URI wins over both. If none is set, the provider default applies.
-- `roles` is optional. The roles are `worker`, `review`, `fixer` and `oracle`.
+- `roles` is optional. The roles are `worker`, `review`, `fixer`, `oracle` and `planner`.
   A role may set `prompt`; `"@file.md"` reads a file next to the config file.
 
 Add the provider first, see "Quick Start" in the [README](../README.md).
@@ -191,8 +196,26 @@ Run these once to see that the safety model works.
 |---|---|
 | Issue without the label `accepted` | `check_done` goes to `end`. No worktree is created. |
 | Issue by an author without write access | The run is skipped. |
+| gh is down at the gate | The run pauses at `ask_check`. A human answers `retry` or `stop`. The oracle does not answer. |
 | Red CI three times | The oracle answers the pause, up to 2 times. Then the run pauses at `ask` and waits for you. No merge happens. |
 | A check fails again after 2 fixer runs | The oracle decides once, then the run pauses at `ask`. |
+
+## 7a. Risky issues
+
+An issue with the labels `accepted` and `risky` runs the plan gate:
+
+1. The state `plan` writes a plan for the issue. The oracle does not change files.
+2. The state `plan_review` reads the plan. The first line of its answer is `APPROVE`,
+   `REJECT` or `DOUBT`.
+3. `APPROVE` starts the state `open_pr`, and the code step follows.
+4. `REJECT` returns to `plan`. The new plan reads the review in `review.txt`.
+5. The third `REJECT`, or any other answer, pauses the run at `ask_plan`. Answer
+   `approve` to code the issue, `replan` to plan it again, or `stop` to end the run.
+
+The oracle never answers `ask_plan`. A risky issue that already has an open pull request
+skips the gate. A copied workflow gets the gate only after you move or delete
+`.tyci/workflows/issue-to-merge` in the project, then run
+`tyci workflow init issue-to-merge` again. The init command never overwrites a directory.
 
 ## 8. Protected paths
 
@@ -284,10 +307,13 @@ Every agent step (worker, review, fixer, findings, and oracle in a `recover` ste
 `report.md` in its artifact dir before it ends: what it did, the result, what is left. The
 roadmap run has no artifact dir and writes no report.
 
-- The task text of every agent has a "Run so far" section: the steps since the last visit of
-  its state (all steps on the first visit), each with `seq`, state, key and the absolute paths
-  of its artifact files, plus the agent's own artifact dir. The agent reads the files with the
-  `read` tool.
+- The task text of every agent has a "Run so far" section. It lists the steps since the last
+  visit of its state (all steps on the first visit). Each line has `seq`, state, key and the
+  absolute paths of its artifact files. The section also gives the agent's own artifact dir.
+  The agent reads the files with the `read` tool.
+- If the last visit of the state failed, that visit is listed too. A failed step has an
+  `error:` line under its line. The error is masked and cut to 2000 bytes, so a retried worker
+  learns why its step failed.
 - After the agent ends, the runner checks that `report.md` exists and is not empty. If not, it
   sends one message in the same session: "You did not leave your artifact at <path>. Write it
   now." After 2 reminders without a report, the run pauses in `ask` with the reason
@@ -299,6 +325,8 @@ roadmap run has no artifact dir and writes no report.
   `post_review.sh` posts the `report.md` of the newest review step. A review step is an agent state
   with agent `review` and no task, whatever its name. The runner gives the artifact dir in
   `TYCI_REVIEW_DIR`.
+
+An oracle state with `"saves": true` saves its answer as `output.txt` in its artifact dir, and the state writes no `report.md`. The runner gives the path of the newest saved answer of the run in `TYCI_ANSWER`, so a check does not depend on the state name. Without the flag, the tasks `pick_critical`, `rebalance_split` and `plan` save their answer.
 
 New PR comments from team members (write or admin permission) go to `comments.md` in the artifact
 dir of the `comments` step; the next `code` visit sees the file in "Run so far".

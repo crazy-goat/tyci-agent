@@ -3,6 +3,8 @@ package flow
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
@@ -78,5 +80,46 @@ func TestReleaseFlowNoTagWithoutAsk(t *testing.T) {
 	}
 	if !seen["ask_release"] {
 		t.Fatalf("ask_release is not reached from start")
+	}
+}
+
+// TestReleaseAskNamesGotoAfterMerge checks that the ask state tells the human which goto answer
+// continues a release after the CHANGELOG merge, and that the answer is accepted by Resume.
+func TestReleaseAskNamesGotoAfterMerge(t *testing.T) {
+	wf := initWF(t, t.TempDir(), "release", "release")
+	ask := wf.States["ask"].Ask
+	if !strings.Contains(ask, "`goto tag`") || !strings.Contains(ask, "`goto wait`") {
+		t.Fatalf("ask text %q does not name goto tag and goto wait", ask)
+	}
+	if strings.Contains(ask, "goto:") {
+		t.Fatalf("ask text %q uses the oracle form goto:<state>; a human answer needs goto <state>", ask)
+	}
+	for _, state := range []string{"tag", "wait"} {
+		if err := checkGoto(wf, state); err != nil {
+			t.Fatalf("goto %s is not accepted: %v", state, err)
+		}
+	}
+}
+
+func TestReleaseFlowGotoTagAfterMerge(t *testing.T) {
+	wf := initWF(t, t.TempDir(), "release", "release")
+	checks := &fakeChecks{keys: map[string][]string{
+		"checks/release_tag.sh":     {"tagged"},
+		"checks/release_wait.sh":    {"ok"},
+		"checks/milestone_close.sh": {"ok"},
+	}}
+	r := &Runner{WF: wf, RunDir: t.TempDir(), Checks: checks, Agents: &fakeAgents{}}
+	st := newRun("ask")
+	st.Status = "paused"
+	st.Ask = &Ask{}
+	if err := r.Resume(context.Background(), st, "goto tag"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if st.Result != "done" {
+		t.Fatalf("Result = %q, want done", st.Result)
+	}
+	want := []string{"checks/release_tag.sh", "checks/release_wait.sh", "checks/milestone_close.sh"}
+	if !slices.Equal(checks.calls, want) {
+		t.Fatalf("checks run = %v, want %v", checks.calls, want)
 	}
 }

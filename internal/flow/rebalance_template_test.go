@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -61,6 +62,10 @@ func TestRebalanceFlowInvalidLoop(t *testing.T) {
 	}
 	if st.Visits["split"] != 3 || st.Current != "ask" {
 		t.Fatalf("visits %v current %q", st.Visits, st.Current)
+	}
+	// The ask text must cover the case without a proposal; a yes is only for a valid one.
+	if !strings.Contains(st.Ask.Message, "or the reason it is not valid") {
+		t.Fatalf("ask message = %q, want the text for the invalid case", st.Ask.Message)
 	}
 	for _, c := range checks.calls {
 		if c == "checks/rebalance_apply.sh" {

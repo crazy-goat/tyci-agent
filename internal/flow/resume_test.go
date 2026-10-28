@@ -128,6 +128,58 @@ func TestAskUnfinished_ListsPausedRunUnchanged(t *testing.T) {
 	}
 }
 
+// AskUnfinished scans the run with a dead owner, then another tyci process
+// takes the run lock and claims the run before AskUnfinished pauses it. The
+// scan and the pause cannot be split by a sleep, so the Workflow call between
+// them (AskUnfinished calls it after the scan and before the pause) blocks
+// until the claim is written. The pause must re-read the state under the run
+// lock, see the live owner and leave the claimed run unchanged.
+func TestAskUnfinished_SkipsRunClaimedAfterScan(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	st := saveRun(t, e.home, 1, nil)
+	dir := RunDir(e.home, "r", st.Run)
+	scanned := make(chan struct{})
+	release := make(chan struct{})
+	workflow := e.m.Workflow
+	var once sync.Once
+	e.m.Workflow = func(info RepoInfo, name string) (*Workflow, error) {
+		once.Do(func() {
+			close(scanned)
+			<-release
+		})
+		return workflow(info, name)
+	}
+	done := make(chan struct{})
+	go func() {
+		e.m.AskUnfinished()
+		close(done)
+	}()
+	<-scanned
+
+	unlock, err := lockRun(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := loadRunState(t, e.home, st.Run)
+	if err := claim(dir, cur, os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	claimed := loadRunState(t, e.home, st.Run)
+
+	close(release)
+	<-done
+	select {
+	case s := <-e.notices:
+		t.Fatalf("notice %q, want none", s)
+	default:
+	}
+	after := loadRunState(t, e.home, st.Run)
+	if after.Status != "running" || after.Current != claimed.Current || after.PID != os.Getpid() || after.Resumed != claimed.Resumed || len(after.History) != len(claimed.History) {
+		t.Fatalf("claimed run changed: after = %+v, claimed = %+v", after, claimed)
+	}
+}
+
 func TestResume_DoesNotIncrementVisits(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, nil)
@@ -751,6 +803,30 @@ func TestWorkflowStart_ResumeCountsHeldPausedRun(t *testing.T) {
 	}
 	if got := loadRunState(t, e.home, st.Run); got.Resumed != 0 || got.Status != "running" {
 		t.Fatalf("refused run changed: %+v", got)
+	}
+	close(c.release)
+	e.notice(t)
+}
+
+// The orchestrator stops while it holds a paused run. ReleaseAdopted forgets
+// the run, so it no longer takes the only worker slot, and a resume passes.
+func TestWorkflowStart_ResumePassesAfterAdoptedRunReleased(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	e.m.SetWorkers(1)
+	saveRun(t, e.home, 5, func(st *RunState) {
+		st.Status, st.Current, st.Ask = "paused", "ask", &Ask{Message: "Need a decision."}
+	})
+	if _, paused, ok := e.m.Adopt(5); !ok || !paused {
+		t.Fatalf("adopt: paused %v, ok %v", paused, ok)
+	}
+	saveRun(t, e.home, 6, nil)
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("resume at the limit: err = %v", err)
+	}
+	e.m.ReleaseAdopted()
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}}); err != nil {
+		t.Fatalf("resume after the orchestrator stopped: %v", err)
 	}
 	close(c.release)
 	e.notice(t)

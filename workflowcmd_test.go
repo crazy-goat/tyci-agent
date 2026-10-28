@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,11 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
 	"github.com/crazy-goat/tyci-agent/internal/trust"
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/tools"
+	"github.com/spf13/pflag"
 )
 
 const wfOKScript = "#!/bin/sh\nexit 0\n"
@@ -112,6 +115,7 @@ func oneCheckFlow(name string) string {
 func runWorkflowCLI(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	resetWorkflowFlags()
+	resetRootFlags()
 	ctx, cancel := context.WithTimeout(context.Background(), wfCommandTimeout)
 	t.Cleanup(cancel)
 	for _, c := range workflowCmd.Commands() {
@@ -149,6 +153,16 @@ func resetWorkflowFlags() {
 	workflowValidateJSON, workflowValidateDir = false, ""
 	workflowStatusJSON = false
 	workflowStopJSON, workflowStopReason = false, ""
+}
+
+// resetRootFlags sets the persistent flags of the root command back to their
+// defaults. Cobra keeps the values of the previous Execute, so a flag set by one
+// test would leak into the next one.
+func resetRootFlags() {
+	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
 }
 
 // TestWorkflowValidateMissingFilesAreProblems checks that a missing check script
@@ -400,6 +414,73 @@ func TestWorkflowRunAgentGetsProvidersAndHooks(t *testing.T) {
 	}
 	if !hookSeen {
 		t.Error("the global hooks.json was not loaded for the agent")
+	}
+}
+
+// TestWorkflowRunAgentGetsDebugLog checks that an agent of a run writes to the
+// debug log of the run, and that the log is closed and kept in HOME.
+func TestWorkflowRunAgentGetsDebugLog(t *testing.T) {
+	home := wfHome(t)
+	wfUseRepo(t, wfRunRepo(t, home))
+	wfWrite(t, filepath.Join(home, ".tyci", "config.json"),
+		`{"default_model":"wfprov/wfmodel","roles":{"helper":{"prompt":"Do the task."}}}`)
+	wfWrite(t, filepath.Join(home, ".tyci", "model.json"),
+		`{"wfprov":{"wfmodel":{"uri":"openai://wfmodel@$KEY@example.com/v1"}}}`)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "debug-flow", "workflow.json"),
+		`{"description":"test","name":"debug-flow","params":[{"name":"issue","description":"issue","required":true}],"start":"work","states":{`+
+			`"work":{"agent":"helper","on":{"done":"end"}},`+
+			`"end":{"end":true}}}`)
+
+	wfUseSpawn(t, func(ctx context.Context, spec tools.TaskSpec) (string, string, error) {
+		dl := debug.FromContext(ctx)
+		if dl == nil {
+			return "", "", errors.New("the agent context has no debug log")
+		}
+		_, _ = fmt.Fprintln(dl, "agent-debug-marker")
+		m := wfReportPath.FindStringSubmatch(spec.Task)
+		if m == nil {
+			return "", "", errors.New("the task names no report")
+		}
+		if err := os.WriteFile(m[1], []byte("done\n"), 0o600); err != nil {
+			return "", "", err
+		}
+		return "done", "wf-session", nil
+	})
+
+	out, errOut, err := runWorkflowCLI(t, "workflow", "run", "debug-flow", "12", "--json")
+	if err != nil {
+		t.Fatalf("run: %v\nstderr: %s", err, errOut)
+	}
+	if r := decodeWorkflowResult(t, out); r.Status != "done" {
+		t.Fatalf("result = %+v", r)
+	}
+	logs, _ := filepath.Glob(filepath.Join(home, ".tyci", "debug", "*.log"))
+	if len(logs) != 1 {
+		t.Fatalf("debug logs = %v, want one", logs)
+	}
+	data, err := os.ReadFile(logs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "agent-debug-marker") {
+		t.Errorf("debug log has no agent line: %q", data)
+	}
+}
+
+// TestWorkflowRunNoDebugFlagWritesNoLog checks that --no-debug keeps the debug
+// log of a run off disk.
+func TestWorkflowRunNoDebugFlagWritesNoLog(t *testing.T) {
+	home := wfHome(t)
+	wfUseRepo(t, wfRunRepo(t, home))
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check", "workflow.json"), oneCheckFlow("one-check"))
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check", "checks", "ok.sh"), wfOKScript)
+
+	if _, _, err := runWorkflowCLI(t, "workflow", "run", "one-check", "13", "--json", "--no-debug"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	logs, _ := filepath.Glob(filepath.Join(home, ".tyci", "debug", "*.log"))
+	if len(logs) != 0 {
+		t.Errorf("debug logs = %v, want none", logs)
 	}
 }
 

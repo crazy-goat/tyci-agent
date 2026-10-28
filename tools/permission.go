@@ -27,6 +27,7 @@ type Policy struct {
 	// Tools is the explicit tool list of the role. Nil means the default set of Permission.
 	Tools []string
 	// Dir is the worktree of the run. With worktree-write, write and edit stay inside it.
+	// bash runs in Dir too, but it is not sandboxed.
 	Dir string
 }
 
@@ -34,7 +35,8 @@ type Policy struct {
 // and does not change the worktree, and Network turns it off.
 var readTools = []string{"read", "find", "skills", "agents", "todo", "wait", "ask_parent", "message", "web"}
 
-// writeTools are added by worktree-write.
+// writeTools are added by worktree-write. The write root does not limit bash
+// (see checkWriteRoot).
 var writeTools = []string{"write", "bash", "kill_job"}
 
 // isMCPTool reports whether name is an MCP tool (mcp_<server>_<tool>).
@@ -56,13 +58,34 @@ func modeAllows(permission, name string) bool {
 
 // AllowedFor reports whether the policy lets the role call the tool name.
 // The always-allowed tools (help, lua, report_progress) are always allowed.
-// An explicit Tools list adds MCP tools, but it cannot widen the permission
-// mode: a built-in tool outside the mode is refused even when it is listed.
+// An explicit Tools list cannot widen the permission mode: a built-in tool
+// outside the mode is refused even when it is listed. It adds MCP tools only
+// in worktree-write and full mode.
 func AllowedFor(p Policy, name string) bool {
 	if slices.Contains(alwaysAllowedTools, name) {
 		return true
 	}
+	if isRoleGatedTool(name) {
+		// No permission mode grants tool_create or tool_promote. A role gets
+		// one only when its tools list names it.
+		if !slices.Contains(p.Tools, name) {
+			return false
+		}
+		// tool_promote writes into the worktree, so a role that may not write
+		// (read-only, or an unset mode) never gets it, even when listed.
+		// tool_create writes only into the run folder, so it is not checked here.
+		if name == toolPromoteName {
+			return p.Permission == PermissionWorktreeWrite || p.Permission == PermissionFull
+		}
+		return true
+	}
 	if isMCPTool(name) {
+		// An MCP tool can change state outside the worktree, so only a mode
+		// that may write, or full, gets one. A read-only role never does, even
+		// when its list names it. An unset mode reads as read-only (modeAllows).
+		if p.Permission != PermissionWorktreeWrite && p.Permission != PermissionFull {
+			return false
+		}
 		// One rule, the same as ToolNames: an MCP tool is offered only when
 		// the list names it, or when there is no list, the mode is full and
 		// the network is on.
@@ -151,8 +174,34 @@ func WithPolicy(ctx context.Context, p Policy) context.Context {
 	})
 }
 
+// PolicyOf returns the policy that WithPolicy stored in ctx, if any.
+func PolicyOf(ctx context.Context) (Policy, bool) {
+	p, ok := ctx.Value(policyCtxKey{}).(Policy)
+	return p, ok
+}
+
+// writeRootLine is added to the system prompt of a worktree-write run. It
+// tells the model the write root, which only write and edit enforce.
+const writeRootLine = "Never change files outside your working directory %s. bash is not sandboxed."
+
+// withWriteRootLine returns system with writeRootLine appended when p has a
+// write root. It uses the same condition as checkWriteRoot, so the prompt and
+// the check agree. Other policies get system unchanged.
+func withWriteRootLine(system string, p Policy) string {
+	if p.Permission != PermissionWorktreeWrite || p.Dir == "" {
+		return system
+	}
+	line := fmt.Sprintf(writeRootLine, p.Dir)
+	if system = strings.TrimSpace(system); system == "" {
+		return line
+	}
+	return system + "\n\n" + line
+}
+
 // checkWriteRoot refuses a write or edit path outside the worktree of the
 // policy. It applies only with worktree-write. Symlinks are resolved first.
+// The limit covers only write and edit: bash runs in the worktree but is not
+// sandboxed, so a command with an absolute path or cd can change files outside it.
 func checkWriteRoot(ctx context.Context, path string) error {
 	p, ok := ctx.Value(policyCtxKey{}).(Policy)
 	if !ok || p.Permission != PermissionWorktreeWrite || p.Dir == "" {

@@ -101,3 +101,63 @@ func TestFindingsApply_BadAnswerFails(t *testing.T) {
 		t.Fatalf("key=%q log=%q", key, log)
 	}
 }
+
+// The doubt list is a list of numbers. jq 1.5 cannot join numbers, so the filter must
+// convert them with tostring first. The output names the numbers with a "#" each.
+func TestFindingsApply_DoubtNumbersJoin(t *testing.T) {
+	dir := setupApply(t, `{"critical":[],"doubt":[1,2]}`, "")
+	testutil.StubGH(t, applyGh)
+	env := map[string]string{"TYCI_REPO": "o/r", "TYCI_RUN_DIR": dir, "TYCI_PARAM_MILESTONE": "v1"}
+	key, exit, _, stderr := testutil.RunCheckOut(t, "findings_apply.sh", env)
+	if exit != 0 || key != "doubt" || !strings.Contains(stderr, "#1 #2") {
+		t.Fatalf("exit=%d key=%q stderr=%q", exit, key, stderr)
+	}
+}
+
+// Every jq join in the check scripts must convert its input with map(tostring) first.
+// This guard runs on every CI jq version, so it catches the jq 1.5 failure that the
+// behaviour test above cannot show. It checks one line at a time: a filter split over
+// several lines escapes it.
+func TestCheckScripts_JoinConvertsNumbers(t *testing.T) {
+	scripts, err := filepath.Glob("*.sh")
+	if err != nil || len(scripts) == 0 {
+		t.Fatalf("no check scripts found: %v", err)
+	}
+	for _, script := range scripts {
+		b, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if strings.Contains(line, "join(") && !strings.Contains(line, "map(tostring) | join(") {
+				t.Errorf("%s:%d: join( without map(tostring) first (jq 1.5 cannot join numbers): %s", script, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// #784: TYCI_ANSWER names the pick answer, so a state with another name works.
+func TestFindingsApply_AnswerFromEnvWithRenamedState(t *testing.T) {
+	dir := setupApply(t, `{"critical":[1],"doubt":[]}`, "")
+	if err := os.Rename(filepath.Join(dir, "artifacts", "001-pick"), filepath.Join(dir, "artifacts", "001-choose")); err != nil {
+		t.Fatal(err)
+	}
+	logPath := testutil.StubGH(t, applyGh)
+	answer := filepath.Join(dir, "artifacts", "001-choose", "output.txt")
+	env := map[string]string{"TYCI_REPO": "o/r", "TYCI_RUN_DIR": dir, "TYCI_PARAM_MILESTONE": "v1", "TYCI_ANSWER": answer}
+	key, exit, _ := testutil.RunCheck(t, "findings_apply.sh", env)
+	b, _ := os.ReadFile(logPath)
+	if exit != 0 || key != "done" || !strings.Contains(string(b), "issue edit 1 -R o/r --milestone v1") {
+		t.Fatalf("exit=%d key=%q log=%q", exit, key, b)
+	}
+}
+
+// #784: a TYCI_ANSWER with no file is a failed answer, even when a pick answer exists in the glob.
+func TestFindingsApply_AnswerMissingFileFails(t *testing.T) {
+	dir := setupApply(t, `{"critical":[1],"doubt":[]}`, "")
+	env := map[string]string{"TYCI_REPO": "o/r", "TYCI_RUN_DIR": dir, "TYCI_PARAM_MILESTONE": "v1", "TYCI_ANSWER": filepath.Join(dir, "artifacts", "009-x", "output.txt")}
+	key, exit, _ := testutil.RunCheck(t, "findings_apply.sh", env)
+	if exit != 0 || key != "fail" {
+		t.Fatalf("exit=%d key=%q", exit, key)
+	}
+}

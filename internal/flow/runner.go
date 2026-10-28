@@ -159,7 +159,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.fail(ctx, st, artErr.Error(), artErr)
 			}
 			started := time.Now()
-			env := append(buildCheckEnv(st, s, r.RunDir, r.DefaultBranch), "TYCI_ARTIFACT_DIR="+artDir, "TYCI_REVIEW_DIR="+r.reviewDir(st))
+			env := append(buildCheckEnv(st, s, r.RunDir, r.DefaultBranch), "TYCI_ARTIFACT_DIR="+artDir, "TYCI_REVIEW_DIR="+r.reviewDir(st), "TYCI_ANSWER="+r.savedAnswer(st))
 			key, res, runErr := r.Checks.Run(ctx, s, env, st.Worktree)
 			ended := time.Now()
 			if artDir != "" {
@@ -253,6 +253,8 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Visit:         st.Visits[cur],
 				ArtifactDir:   artDir,
 				RunSoFar:      runSoFar(st, cur, r.RunDir),
+				PlanRejects:   planRejects(st),
+				Saves:         savesAnswer(r.WF, cur),
 			}
 			// The failed-step context goes to the recovery roles (as before #385)
 			// and to the recovery states. Both are looked up in recoveryCaps.

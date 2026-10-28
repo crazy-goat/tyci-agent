@@ -266,6 +266,25 @@ func DenySubagentRecursion() ToolGate {
 	return Deny("tool is not available to subagents (recursion/discovery denied)", SubagentDeniedNames()...)
 }
 
+// SubagentRoleToolGate refuses tool_create and tool_promote for a subagent
+// that does not name the tool. A role names it in the Tools list of its
+// policy, and a named agent names it in its tools: list (allowed). Any other
+// subagent is refused, so it cannot use the tool by name or through a lua
+// script's tool() call, because the gate travels with the context. The main
+// chat has no subagent gate, so it is not affected.
+func SubagentRoleToolGate(ctx context.Context, allowed []string) ToolGate {
+	p, hasPolicy := ctx.Value(policyCtxKey{}).(Policy)
+	return func(name string) error {
+		if !isRoleGatedTool(name) {
+			return nil
+		}
+		if slices.Contains(allowed, name) || (hasPolicy && slices.Contains(p.Tools, name)) {
+			return nil
+		}
+		return fmt.Errorf("tool %q is not available to this subagent: only the main chat and a role or agent whose tools list names it can use it", name)
+	}
+}
+
 // AllowedDelegationTool returns which delegation tool — "subagent" or
 // "scout" — a caller at depth may reach, or "" when neither is available.
 // This is the single place that decision is made; both the schema builders

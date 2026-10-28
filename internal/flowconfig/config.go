@@ -85,6 +85,7 @@ type Role struct {
 	// when the model of the role fails.
 	Fallback []string `json:"fallback,omitempty"`
 	// Permission is read-only, worktree-write or full. Empty means worktree-write.
+	// worktree-write limits only write and edit to the worktree; bash is not sandboxed.
 	Permission string `json:"permission,omitempty"`
 	// Network is nil (true) or false. False removes web and MCP tools.
 	Network *bool `json:"network,omitempty"`
@@ -141,7 +142,7 @@ func DefaultPrompt(role string) (string, bool) {
 }
 
 func isBuiltinRole(name string) bool {
-	return name == "worker" || name == "review" || name == "fixer" || name == "oracle"
+	return name == "worker" || name == "review" || name == "fixer" || name == "oracle" || name == "planner"
 }
 
 // Load reads the global file and, only when trusted, the project file, then merges and validates them.
@@ -391,7 +392,7 @@ func (c *Config) hasModel(model string) bool {
 	return strings.Contains(model, "/")
 }
 
-// Role returns the named role. Only worker, review, fixer and oracle fall back to embedded prompts.
+// Role returns the named role. Only worker, review, fixer, oracle and planner fall back to embedded prompts.
 func (c *Config) Role(name string) (Role, error) {
 	r, ok := c.Roles[name]
 	if ok && r.Prompt != "" {

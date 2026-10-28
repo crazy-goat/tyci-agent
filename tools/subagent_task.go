@@ -111,6 +111,11 @@ func resumeSubagentTask(ctx context.Context, s TaskSpec) (string, string, error)
 		return "", "", errors.New("resume unavailable: job registry not configured")
 	}
 	jobCtx := WithWorkdir(ctx, s.Dir)
+	// The resumed run keeps the role's tool gate and write root. The caller's
+	// ctx carries no policy, so without this a resumed role could write anywhere.
+	if s.Policy != nil {
+		jobCtx = WithPolicy(jobCtx, *s.Policy)
+	}
 	h, err := resumer.Resume(jobCtx, s.Resume, s.Task)
 	if err != nil {
 		return "", "", err
@@ -160,7 +165,11 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 	if s.Transcript != "" {
 		ctx = context.WithValue(ctx, TranscriptCtxKey{}, s.Transcript)
 	}
-	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
+	system := s.SystemPrompt
+	if s.Policy != nil {
+		system = withWriteRootLine(system, *s.Policy)
+	}
+	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: system, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
 	t.fallbacks = s.Fallbacks
 	t.maxIterationsCap = s.MaxRounds
 	t.maxToolCalls = s.MaxToolCalls

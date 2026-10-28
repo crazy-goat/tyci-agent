@@ -389,6 +389,22 @@ func TestContextCancelStopsLoop(t *testing.T) {
 	e.waitStop()
 }
 
+// When the orchestrator stops, it releases the runs it adopted, so a held paused
+// run no longer counts as a worker.
+func TestStopReleasesAdoptedRuns(t *testing.T) {
+	e := newEnv(t, Config{}, issue(1, ""))
+	e.r.paused = []int{5}
+	e.start()
+	if n := e.r.releases(); n != 0 {
+		t.Fatalf("released before the stop: %d", n)
+	}
+	e.cancel()
+	e.waitStop()
+	if n := e.r.releases(); n != 1 {
+		t.Fatalf("ReleaseAdopted called %d times", n)
+	}
+}
+
 func TestPanicIsRecovered(t *testing.T) {
 	e := newEnv(t, Config{}, issue(1, ""))
 	e.o.h.PlanReady = func(PlanReady) { panic("kaboom") }
@@ -578,5 +594,30 @@ func TestPausedRunStoppedDuringPlanIsNotStarted(t *testing.T) {
 	}
 	if e.r.starts(1) != 0 {
 		t.Fatalf("starts(1)=%d", e.r.starts(1))
+	}
+}
+
+// A milestone-close start that fails names the command that installs the workflow,
+// even when the start error is long enough for sanitize to cut it.
+func TestCloseStartErrorNamesInstall(t *testing.T) {
+	e := newEnv(t, Config{AutoClose: true}, issue(1, ""))
+	e.r.closeErr = errors.New(`workflow "milestone-close" not found (available: issue-to-merge, roadmap, rebalance, release, fix-ci, dependency-bump, rebalance-extra-long-name, another-long-workflow-name); run "tyci workflow init milestone-close" to create one from a template`)
+	e.start()
+	e.f.Ms[0] = forge.Milestone{Number: 1, Title: "v0.4.0", ClosedCount: 1}
+	e.r.handle(1).finish("merged")
+	e.waitReady()
+	for {
+		select {
+		case l := <-e.notes:
+			if !strings.Contains(l, "did not start") {
+				continue
+			}
+			if !strings.Contains(l, `run "tyci workflow init milestone-close" to install it`) {
+				t.Fatalf("notice %q has no install hint", l)
+			}
+			return
+		case <-time.After(wait):
+			t.Fatal("no did-not-start notice")
+		}
 	}
 }

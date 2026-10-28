@@ -30,7 +30,7 @@ func okWF() *Workflow {
 func TestPrepareRun_InvalidWorkflowCreatesNothing(t *testing.T) {
 	home := t.TempDir()
 	wf := okWF()
-	wf.States["a"] = State{Agent: "planner", On: map[string]string{"done": "end"}}
+	wf.States["a"] = State{Agent: "auditor", On: map[string]string{"done": "end"}}
 	called := false
 	d := PrepareDeps{
 		Lookup:      func(string) (*Workflow, string, error) { return wf, "test", nil },

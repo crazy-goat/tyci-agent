@@ -380,6 +380,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		tuiDisp.SetBtwJobID(id, job.ID)
 	}
 	startBtwQuestion := func(question string) { openBtwEvaluation(question, startBtw, tuiDisp.OpenBtw) }
+	startPlan := func(topic string) error { return startPlanner(baseCtx, topic) }
 
 	// serviceCommands runs the slash commands typed while a turn was in
 	// flight, when the main loop below was blocked in the agent run and could
@@ -404,6 +405,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				handleMsgCommand(strings.TrimSpace(strings.TrimPrefix(cmd, "/msg")))
 			case cmd == "/stop" || strings.HasPrefix(cmd, "/stop "):
 				stopCommandOutput(tuiDisp, strings.TrimPrefix(cmd, "/stop"), tools.StopWorkflowRun)
+			case cmd == "/plan" || strings.HasPrefix(cmd, "/plan "):
+				handlePlanCommand(tuiDisp, strings.TrimPrefix(cmd, "/plan"), startPlan)
 			case cmd == "/reminders":
 				handleRemindersCommand(tuiDisp)
 			case cmd == "/reload":
@@ -571,6 +574,12 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// thread's turns.
 				iterCancel()
 				handleBtwQuestionCommand(tuiDisp, strings.TrimPrefix(trimmed, "/btw"), startBtwQuestion)
+				continue
+			case trimmed == "/plan" || strings.HasPrefix(trimmed, "/plan "):
+				// /plan [topic]: start a planner job in its own worktree. It
+				// runs on baseCtx, like /btw, so iterCancel does not stop it.
+				iterCancel()
+				handlePlanCommand(tuiDisp, strings.TrimPrefix(trimmed, "/plan"), startPlan)
 				continue
 			case trimmed == "/reminders":
 				// Bare /reminders: list the undelivered reminders.

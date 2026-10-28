@@ -98,6 +98,7 @@ func (o *Orchestrator) Start(ctx context.Context) {
 				o.notify(fmt.Sprintf("orchestrator stopped: panic: %v", p))
 			}
 		}()
+		defer o.releaseAdopted()
 		o.loop(ctx, finished, adopted)
 	}()
 }
@@ -203,7 +204,9 @@ func (o *Orchestrator) startClose(ctx context.Context, milestone string) {
 	h, err := o.r.Start(ctx, CloseWorkflow, nil, []string{milestone})
 	if err != nil {
 		o.endClose(milestone)
-		o.notify(fmt.Sprintf("%s did not start for milestone %s: %s", CloseWorkflow, sanitize(milestone, maxTitle), sanitize(err.Error(), maxReason)))
+		// The hint follows the cut reason: a long "not found" error would lose it.
+		o.notify(fmt.Sprintf("%s did not start for milestone %s: %s. If the workflow is missing, run \"tyci workflow init %s\" to install it.",
+			CloseWorkflow, sanitize(milestone, maxTitle), sanitize(err.Error(), maxReason), CloseWorkflow))
 		return
 	}
 	o.notify(fmt.Sprintf("Started %s for milestone %s.", CloseWorkflow, sanitize(milestone, maxTitle)))
@@ -415,6 +418,14 @@ func (o *Orchestrator) adoptResumed(ctx context.Context, finished chan<- finishe
 		go o.watch(issue, h, finished)
 	}
 	return out
+}
+
+// releaseAdopted runs when the loop stops. The adopted runs no longer count as
+// workers, so a resume by hand is not refused for a run the orchestrator dropped.
+func (o *Orchestrator) releaseAdopted() {
+	if a, ok := o.r.(Adopter); ok {
+		a.ReleaseAdopted()
+	}
 }
 
 // markAdopted marks the plan items of the adopted runs: wip, or ask for a

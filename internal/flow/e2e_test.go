@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/worktree"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // End-to-end runner tests: the REAL ExecChecker, the REAL check scripts of a
@@ -589,9 +590,10 @@ func TestE2E_RecoverOracleStopWithoutPR_EndsRun(t *testing.T) {
 		"oracle": {"stop the issue is already done"},
 	}
 	e := newE2E(t, s)
-	e.ctlSet("down", "")
+	// The PR is listed, but its branch is not on origin, so open_pr fails and the fixer runs.
+	e.ctlSet("pr", "")
 	e.mustFinish()
-	e.wantStates("check_done, fixer, oracle")
+	e.wantStates("check_done, open_pr, fixer, oracle")
 	if e.st.PR != 0 || e.st.Status != "done" {
 		t.Errorf("PR %d, status %q", e.st.PR, e.st.Status)
 	}
@@ -655,17 +657,24 @@ func TestE2E_CITimeout_GoesToAsk(t *testing.T) {
 	}
 }
 
-func TestE2E_GhDown_AtGate_FixerThenAsk(t *testing.T) {
-	e := newE2E(t, map[string][]string{"fixer": {"failed"}, "oracle": {"ask gh is down"}})
+// #810: issue_done.sh fails with no key (gh is down). The run pauses at ask_check for a
+// human. The fixer and the oracle are not started, and the worktree stays.
+func TestE2E_IssueDoneFails_AsksCheck(t *testing.T) {
+	e := newE2E(t, nil)
 	e.ctlSet("down", "")
 	e.mustPause()
-	e.wantStates("check_done, fixer, oracle")
-	if e.st.History[0].To != "fixer" || e.agents.calls != 2 {
-		t.Errorf("to = %q, agent calls = %d", e.st.History[0].To, e.agents.calls)
+	e.wantStates("check_done")
+	if e.st.Current != "ask_check" || e.st.Ask == nil {
+		t.Errorf("current %q, ask = %+v", e.st.Current, e.st.Ask)
+	}
+	if e.agents.calls != 0 {
+		t.Errorf("agent calls = %d, want 0", e.agents.calls)
 	}
 	if _, err := os.Stat(e.st.Worktree); err != nil {
 		t.Errorf("worktree must stay when the run asks: %v", err)
 	}
+	e.wantNoAsk()
+	e.wantNoMerge()
 }
 
 func TestE2E_StateJsonHasEveryTransition(t *testing.T) {
@@ -778,4 +787,208 @@ func TestE2E_OpenPR_RedCIGoesToCode(t *testing.T) {
 	if !strings.Contains(files, "earlier.txt") || !strings.Contains(files, "fix.txt") {
 		t.Errorf("PR branch files = %q, want the earlier work and the fix", files)
 	}
+}
+
+// riskyIssue is the issue of the plan gate tests: accepted and labelled risky.
+const riskyIssue = `{"state":"OPEN","author":{"login":"alice"},"labels":[{"name":"accepted"},{"name":"risky"}],"assignees":[]}`
+
+// gateAgents runs the plan steps with the gate runner and the other states with other.
+type gateAgents struct {
+	gate, other AgentRunner
+}
+
+func (g gateAgents) Run(ctx context.Context, role, task string, rc RunContext) (string, string, error) {
+	if isPlanStep(role, task) {
+		return g.gate.Run(ctx, role, task, rc)
+	}
+	return g.other.Run(ctx, role, task, rc)
+}
+
+// planGate runs the plan steps through the real subagent runner, with the real task
+// texts. The plan answers the texts of plans and the plan review answers the texts of
+// reviews, one per call and in order. An empty queue is an agent error. It returns the
+// task texts of the plan steps, in call order.
+func (e *e2e) planGate(plans, reviews []string) *[]string {
+	e.t.Helper()
+	var tasks []string
+	spawn := func(_ context.Context, s tools.TaskSpec) (string, string, error) {
+		tasks = append(tasks, s.Task)
+		q := &plans
+		if strings.Contains(s.Task, "Review the plan for the issue") {
+			q = &reviews
+		}
+		if len(*q) == 0 {
+			return "", "", errors.New("no scripted answer")
+		}
+		answer := (*q)[0]
+		*q = (*q)[1:]
+		return answer, "sess-plan", nil
+	}
+	sub := NewSubagentRunner(testCfg(), spawn)
+	sub.Render = TaskTemplates{Dir: e.wf.Source}
+	sub.IssueContext = func(context.Context, string, int) (string, error) { return "ISSUE", nil }
+	e.agentRunner = gateAgents{gate: sub, other: e.agents}
+	return &tasks
+}
+
+// wantNoAsk fails when the run has an ask step, that is a pause that an oracle answered or a human did.
+func (e *e2e) wantNoAsk() {
+	e.t.Helper()
+	for _, h := range e.st.History {
+		if h.Kind == "ask" {
+			e.t.Errorf("unexpected ask step %+v", h)
+		}
+	}
+}
+
+// #214: an approved plan of a risky issue goes on to the code step.
+func TestE2E_RiskyIssue_ApprovedPlanGoesToCode(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	e.planGate([]string{"1. Goal\nfix it"}, []string{"APPROVE\nthe plan is correct"})
+	e.mustFinish()
+	e.wantStates("check_done, open_pr_risky, plan, plan_review, open_pr, code, review, lock, update, post_review, ci, comments, merge, findings")
+	e.wantMerged()
+	plan := filepath.Join(e.runDir, "artifacts", "003-plan", "output.txt")
+	if b, err := os.ReadFile(plan); err != nil || !strings.Contains(string(b), "fix it") {
+		t.Errorf("plan output %q, err %v", b, err)
+	}
+	if h := e.st.History[3]; h.Key != "APPROVE" || h.To != "open_pr" {
+		t.Errorf("plan_review step = %+v", h)
+	}
+}
+
+// #214: a REJECT sends the run back to plan, and the new plan reads the review.
+func TestE2E_RiskyIssue_RejectLoopsToPlan(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	tasks := e.planGate([]string{"plan one", "plan two"}, []string{"REJECT\nadd the tests", "APPROVE"})
+	e.mustFinish()
+	e.wantStates("check_done, open_pr_risky, plan, plan_review, plan, plan_review, open_pr, code, review, lock, update, post_review, ci, comments, merge, findings")
+	e.wantMerged()
+	if len(*tasks) != 4 || !strings.Contains((*tasks)[2], "004-plan_review/review.txt") {
+		t.Errorf("second plan task lacks the review file; %d plan tasks", len(*tasks))
+	}
+}
+
+// #214: the third REJECT goes to the human state ask_plan. The generic ask state is not used.
+func TestE2E_RiskyIssue_ThirdRejectAsksPlan(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	e.planGate([]string{"p1", "p2", "p3"}, []string{"REJECT\na", "REJECT\nb", "REJECT\nc"})
+	e.mustPause()
+	e.wantStates("check_done, open_pr_risky, plan, plan_review, plan, plan_review, plan, plan_review")
+	if h := e.st.History[7]; h.Key != "REJECT_LIMIT" || h.To != "ask_plan" {
+		t.Errorf("third plan_review step = %+v", h)
+	}
+	if e.st.Current != "ask_plan" || e.st.Ask == nil {
+		t.Errorf("current %q, ask = %+v", e.st.Current, e.st.Ask)
+	}
+	e.wantNoAsk()
+	e.wantNoMerge()
+}
+
+// #214: a DOUBT, or any answer that is not a verdict, goes to the human state ask_plan.
+func TestE2E_RiskyIssue_DoubtAsksPlan(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	e.planGate([]string{"p1"}, []string{"maybe, the plan looks fine"})
+	e.mustPause()
+	e.wantStates("check_done, open_pr_risky, plan, plan_review")
+	if h := e.st.History[3]; h.Key != "DOUBT" || h.To != "ask_plan" || e.st.Current != "ask_plan" {
+		t.Errorf("plan_review step = %+v, current %q", h, e.st.Current)
+	}
+	e.wantNoAsk()
+}
+
+// #214: a failed plan step goes to the human state ask_plan.
+func TestE2E_RiskyIssue_PlanErrorAsksPlan(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	e.planGate(nil, nil)
+	e.mustPause()
+	e.wantStates("check_done, open_pr_risky, plan")
+	if e.st.Current != "ask_plan" {
+		t.Errorf("current %q", e.st.Current)
+	}
+	e.wantNoAsk()
+}
+
+// #214: a human answer approve at ask_plan starts the code step.
+func TestE2E_RiskyIssue_HumanApprovesAfterAsk(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	e.planGate([]string{"p1", "p2", "p3"}, []string{"REJECT\na", "REJECT\nb", "REJECT\nc"})
+	e.mustPause()
+	if err := e.runner.Resume(context.Background(), e.st, "approve"); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if e.st.Status != "done" {
+		t.Fatalf("status %q, want done; history %v", e.st.Status, e.trail())
+	}
+	if !strings.Contains(e.states(), "ask_plan, open_pr, code") {
+		t.Errorf("history = %s", e.states())
+	}
+	e.wantMerged()
+}
+
+// #214: a human answer replan starts the count of REJECT answers again. After the
+// replan, one REJECT goes back to plan and does not reach ask_plan.
+func TestE2E_RiskyIssue_ReplanResetsRejects(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	e.planGate([]string{"p1", "p2", "p3", "p4", "p5"}, []string{"REJECT\na", "REJECT\nb", "REJECT\nc", "REJECT\nd", "APPROVE"})
+	e.mustPause()
+	if err := e.runner.Resume(context.Background(), e.st, "replan"); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if e.st.Status != "done" {
+		t.Fatalf("status %q, want done; history %v", e.st.Status, e.trail())
+	}
+	if !strings.Contains(e.states(), "ask_plan, plan, plan_review, plan, plan_review, open_pr, code") {
+		t.Errorf("history = %s", e.states())
+	}
+	ask := -1
+	for i, h := range e.st.History {
+		if h.Kind == "ask" {
+			ask = i
+		}
+	}
+	if ask < 0 || ask+2 >= len(e.st.History) {
+		t.Fatalf("no replan step in history %v", e.trail())
+	}
+	if h := e.st.History[ask+2]; h.State != "plan_review" || h.Key != "REJECT" || h.To != "plan" {
+		t.Errorf("the first review after replan = %+v, want REJECT to plan", h)
+	}
+}
+
+// #214: a risky issue that already has a PR skips the plan gate.
+func TestE2E_RiskyIssue_ExistingPRSkipsGate(t *testing.T) {
+	e := newE2E(t, map[string][]string{"findings": {"done"}})
+	e.ctlSet("issue.json", riskyIssue)
+	e.earlierPR("earlier.txt", "e")
+	e.mustFinish()
+	e.wantStates("check_done, open_pr_risky, lock, update, post_review, ci, comments, merge, findings")
+	e.wantMerged()
+	if e.st.Visits["plan"] != 0 || e.st.Visits["code"] != 0 {
+		t.Errorf("plan visits %d, code visits %d", e.st.Visits["plan"], e.st.Visits["code"])
+	}
+}
+
+// #214: open_pr.sh fails for a risky issue. The run pauses at ask_plan and no code step runs.
+func TestE2E_RiskyIssue_OpenPRFailAsksPlan(t *testing.T) {
+	e := newE2E(t, happy())
+	e.ctlSet("issue.json", riskyIssue)
+	// The PR is listed, but its branch is not on origin, so 'git fetch' fails and the key is fail.
+	e.ctlSet("pr", "")
+	e.mustPause()
+	e.wantStates("check_done, open_pr_risky")
+	if e.st.Current != "ask_plan" || e.st.Ask == nil {
+		t.Errorf("current %q, ask = %+v", e.st.Current, e.st.Ask)
+	}
+	if e.st.Visits["code"] != 0 || e.st.Visits["plan"] != 0 {
+		t.Errorf("code visits %d, plan visits %d", e.st.Visits["code"], e.st.Visits["plan"])
+	}
+	e.wantNoAsk()
+	e.wantNoMerge()
 }

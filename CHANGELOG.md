@@ -6,11 +6,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Lua tools: `tool_promote` copies a tool only when the safety review answers exactly `SAFE`. An answer that has more text, also one that starts with `SAFE`, is refused (#815).
+- Internal: `SubagentToolCreateGate` is renamed `SubagentRoleToolGate`. It checks the role-gated tools `tool_create` and `tool_promote` (#815).
+- Docs: the README says that the planner rules for issues live only in its prompt, and that its `bash` tool is not sandboxed (#808).
+
+### Deprecated
+- CLI: the `--debug` flag has no effect and is hidden. It is still accepted, and it prints a deprecation notice. The debug log in `~/.tyci/debug/` is always on; use `--no-debug` to turn it off (#786).
+
+### Removed
+- Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
+
+### Fixed
+- Lua tools: a refused `tool_promote` call returns a failure, not a success. The error gives the reason and says to ask the user (#815).
+- Workflows: an unknown result of the `issue-to-merge` gate `check_done` no longer goes to the fixer. The run pauses at the new state `ask_check`, which the oracle never answers. A human answers `retry` to run the gate again, or `stop` to end the run. A copied workflow does not get the fix. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again (#810).
+- Lua tools: a paused run that starts again, also after a tyci restart, loads the tool files of its run folder again. A bad file is logged and skipped, and the run starts (#813).
+- Lua tools: at start, tyci removes the session folders `tyci-session-*` of tyci processes that have exited. A folder without a PID, made by an older tyci, is removed after 24 hours (#813).
+- Flow: a saved oracle answer no longer depends on the task or state name. A state with `"saves": true` saves its answer as `output.txt`, and the check gets its path in `TYCI_ANSWER`. The builtin `milestone-close` and `rebalance` templates set the flag, so a copied workflow with a renamed state still moves its findings or validates its split. A workflow with no `saves` flag keeps the task names `pick_critical`, `rebalance_split` and `plan` (#784).
+- Transcripts: the `cwd` in the header of a subagent transcript is the working directory of its run, not the process directory (#791).
+
+### Security
+- Roles: a role job that is resumed keeps its tool policy and its worktree. Before, the chat tool `resume` and the agent view resumed it with no tool gate and no write root, so it could write outside its worktree (#791).
+- Roles: a role with the permission `read-only` refuses every MCP tool, also when its `tools` list names it. The refusal applies to a direct call, to `tool()` in `lua` and to the tool schema. The plan steps and the read-only text runs get the same rule (#804).
+- Memory: project notes in `.tyci/memory/` are written with mode `0600`, as role notes are, and a note that already exists with a looser mode is tightened on the next write. This repository's `.gitignore` ignores `.tyci/memory/`, so `git add -A` does not commit the notes. tyci does not write a `.gitignore` for other projects; add `/.tyci/memory/` to the `.gitignore` of a project that uses memory notes (#795).
+- Roles: the write root of a `worktree-write` role limits only `write` and `edit`. `bash` runs in the worktree but is not sandboxed, so a command with an absolute path or `cd` can still change files outside it. The docs now say this, and a `worktree-write` run gets a system prompt line that names its worktree and this limit (#790).
+
+## [0.11.0] - 2026-10-28
+
 ### Added
+- Chat: `/plan [topic]` starts a planner job in its own worktree, with the builtin `planner` role. The job runs beside the other jobs and takes no worker slot. The planner stays open until tyci exits, and can be resumed in its worktree, from the agent view or the chat tool `resume`. At exit a turn that still runs is stopped first, then a clean worktree is removed, and a kept one is shown on the terminal (#799).
+- Flow: `planner` is a builtin role with the permission `worktree-write` and network on. Its prompt tells it to read the code and the open issues, search for duplicates, create an issue only after the user says "create it", never set a milestone or the `accepted` label, and write files only in its own worktree (#798).
+- Lua tools: the `tool_create` tool lets the main chat, and a workflow role whose `tools` list names it, create a Lua tool in the run or session folder. The tool lasts until that run or session ends (#213).
+- Lua tools: the `tool_promote` tool copies a Lua tool made in this run or session to `.tyci/tools/<name>.lua` of the worktree, only when a read-only safety review answers `SAFE`. Otherwise nothing is copied and the chat asks the user. The copy is not committed (#213).
+- Memory: a workflow role keeps one private note in `~/.tyci/memory/<repo>/<role>.md`. The role writes it with `memory(scope="role")`, and the note is loaded into the system prompt of that role only. The file is outside the repository (#211).
 - Workflows: the `issue-to-merge` workflow assigns the issue to the account that runs it. The gate skips an issue that another account is assigned to, so two runs on two machines are unlikely to work on the same issue. A short check-then-assign window remains: two runs that start within seconds of each other can both assign the issue. The assignment stays after the run ends. A run of another account then skips the issue with no message. Release it with `gh issue edit <N> -R <repo> --remove-assignee <login>` (#753).
+- Workflows: the `issue-to-merge` workflow asks for a plan before the code step of an issue with the label `risky`. An oracle reviews the plan. The run pauses at `ask_plan` after a doubt or three rejected plans, and a human answers `approve`, `replan` or `stop`. A copied workflow does not get the gate. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again (#214).
 - Workflows: the `issue-to-merge` workflow pauses at the new state `ask_protected` when the pull request changes protected paths (`.github/`, `.tyci/`, `internal/flow/checks/`). A human answers `approve` to merge the pull request through the run, or `stop` to end the run. The oracle never answers this pause, and it cannot send the run to the approved merge (#753).
 
 ### Changed
+- Chat: `plan` is a reserved workflow name, like the other builtin commands. A workflow named `plan` cannot start with `/plan` (#799).
 - Workflows: the title of a run's pull request is the subject of the first non-merge commit since the default branch. A sync merge as the last commit no longer becomes the title (#753).
 - Workflows: the review prompt tells the reviewer to check the coder's claims against the code, to check the issue numbers that a diff cites, and to drop findings without a file and line. A review round reads the earlier review reports and looks first at the new commits. The worker fixes every hit of a pattern that a review lists (#753).
 
@@ -20,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Lua tools: a top-level loop stops with a load error after 5s instead of hanging startup or `/reload`. Each call also has a 300s internal limit, even without a caller deadline; earlier deadlines and cancellation still apply (#755).
 - Display: the Runs tab keeps the selection on the same run when runs change state. The cursor no longer moves to another run when a run finishes and the rows reorder (#553).
+- Flow: a retried worker gets the error of the failed step in its task text, under "Run so far". The error is masked and cut to 2000 bytes (#445).
+- CLI: `tyci run` prints the max-iterations warning on stderr, not stdout (#466).
+- Flow: start-up does not pause a run that another tyci process resumes at the same time (#432).
+- Flow: the `milestone-close` apply step joins the doubtful issue numbers after it converts them to text, so jq 1.5 no longer fails and exits without a key (#741).
+- Orchestrator: when `milestone-close` does not start, the notice says how to install it, with `tyci workflow init milestone-close`. The hint is added after the cut error text, so a long error does not hide it (#741).
+- Agent: a job or run notice no longer resets the end-of-turn job reminder budget. Only a real user message resets it. The todo reminder budget follows the same rule (#484).
+- CLI: `tyci workflow run` writes the debug log to `~/.tyci/debug/`, and `--no-debug` turns it off (#515).
+- Subagents: `wait`, `wait` with ids and background `bash` use the same subagent rule as `kill_job` (#724).
+- Workflows: the `release` workflow question tells the human to answer `goto tag` after the CHANGELOG pull request is merged, and `goto wait` if the release tag is already on origin. It also says that `retry` at that point runs the worker on an empty `[Unreleased]` (#739).
+- Workflows: a role agent that is resumed to write its `report.md` keeps its tool policy. Its `write` and `edit` refuse paths outside the run worktree, as in the first visit (#446).
+- Workflows: the `rebalance` workflow shows the reason why the proposal is not valid when the split pauses after three invalid proposals. The ask text no longer says that a proposal is shown below in that case, and it says to answer `yes` only for a valid proposal (#740).
+- Flow: the orchestrator releases its paused runs when it stops. They no longer take a worker slot, so a resume of another run is not refused at `orchestrator.workers` (#731).
+- Flow: a text run (the `roadmap` oracle) runs read-only in an empty temporary dir, not in the main checkout. It can no longer write files there (#789).
 
 ## [0.10.0] - 2026-10-14
 

@@ -52,6 +52,37 @@ func TestRunSubagentTask_PassesCompactLimits(t *testing.T) {
 	}
 }
 
+// #790: a worktree-write run tells the model its write root, because bash is
+// not sandboxed. read-only and full runs get the prompt unchanged.
+func TestRunSubagentTask_WriteRootLineByPermission(t *testing.T) {
+	dir := t.TempDir()
+	want := "Never change files outside your working directory " + dir + ". bash is not sandboxed."
+	cases := []struct {
+		name   string
+		sys    string
+		policy *Policy
+		want   string
+	}{
+		{"worktree-write", "SYS", &Policy{Role: "worker", Permission: PermissionWorktreeWrite, Dir: dir}, "SYS\n\n" + want},
+		{"worktree-write without prompt", "", &Policy{Role: "worker", Permission: PermissionWorktreeWrite, Dir: dir}, want},
+		{"read-only", "SYS", &Policy{Role: "worker", Permission: PermissionReadOnly, Dir: dir}, "SYS"},
+		{"full", "SYS", &Policy{Role: "worker", Permission: PermissionFull, Dir: dir}, "SYS"},
+		{"no policy", "SYS", nil, "SYS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &recordingRunner{}
+			_, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x", Model: "m", SystemPrompt: tc.sys, Dir: dir, Policy: tc.policy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.gotSystem != tc.want {
+				t.Errorf("system prompt = %q, want %q", r.gotSystem, tc.want)
+			}
+		})
+	}
+}
+
 // #201: the role fallbacks in TaskSpec reach the child options.
 func TestRunSubagentTask_PassesFallbacks(t *testing.T) {
 	r := &recordingRunner{}
@@ -150,10 +181,11 @@ func TestRunSubagentTask_NamedRunSessionIsJobID(t *testing.T) {
 
 type fakeResumer struct {
 	jobID, task, dir string
+	ctx              context.Context
 }
 
 func (f *fakeResumer) Resume(ctx context.Context, jobID, task string) (JobHandle, error) {
-	f.jobID, f.task, f.dir = jobID, task, Workdir(ctx)
+	f.jobID, f.task, f.dir, f.ctx = jobID, task, Workdir(ctx), ctx
 	return testJobHandle{"job2"}, nil
 }
 
@@ -183,6 +215,31 @@ func TestRunSubagentTask_ResumeSendsTaskToSession(t *testing.T) {
 	}
 	if r.jobID != "job1" || r.task != "write it" || r.dir != dir || w.calls != 2 {
 		t.Errorf("resumer=%+v waits=%d", r, w.calls)
+	}
+}
+
+// A resumed role keeps its policy: its write root applies to the resumed run.
+func TestRunSubagentTask_ResumeKeepsPolicy(t *testing.T) {
+	oldResumer := getJobResumer()
+	tool, _ := lookupTool("wait")
+	wt := tool.(*WaitTool)
+	oldWaiter := wt.waiter()
+	t.Cleanup(func() {
+		SetJobResumer(oldResumer)
+		SetJobWaiter(oldWaiter)
+	})
+	r, w := &fakeResumer{}, &fakeWaiter{}
+	SetJobResumer(r)
+	SetJobWaiter(w)
+	root := t.TempDir()
+	outside := t.TempDir()
+	pol := Policy{Role: "worker", Permission: PermissionWorktreeWrite, Network: true, Dir: root}
+	if _, _, err := RunSubagentTask(context.Background(), TaskSpec{Task: "report", Resume: "job1", Dir: root, Policy: &pol}); err != nil {
+		t.Fatal(err)
+	}
+	res := RunTool(r.ctx, "write", map[string]any{"path": filepath.Join(outside, "x.txt"), "content": "x"})
+	if res.Success || !strings.Contains(res.Error, "outside the worktree") {
+		t.Fatalf("resumed write outside the worktree: %+v", res)
 	}
 }
 

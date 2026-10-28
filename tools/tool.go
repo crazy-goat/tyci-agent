@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -219,6 +220,39 @@ func builtinToolsSchema() []map[string]any {
 						"maxLineLength": map[string]any{"type": "integer", "description": "Grep only — trim long lines (default: 300)"},
 					},
 					"required": []string{"pattern"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "tool_create",
+				"description": "Create a Lua tool that you can call again in this run or session. source is a complete Lua script in the .tyci/tools format: it returns a table with schema (name, description, parameters) and run(ctx, args). name must equal schema.name. The tool is registered at once; call it with the lua tool: tool(\"<name>\", {...}). It is removed when the run or session ends. Use it for a multi-step job you need several times, not for one-off work.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name":   map[string]any{"type": "string", "description": "Tool name: lowercase letters, digits and underscores. Must equal schema.name in source."},
+						"source": map[string]any{"type": "string", "description": "The Lua script, in the .tyci/tools format."},
+						"tests": map[string]any{"type": "array", "description": "Optional tests run before the tool is registered. If one fails, nothing is created.", "items": map[string]any{"type": "object", "properties": map[string]any{
+							"args":   map[string]any{"type": "object", "description": "Input to run the tool with"},
+							"expect": map[string]any{"type": "string", "description": "Text the result content must contain"},
+						}, "required": []string{"expect"}}},
+					},
+					"required": []string{"name", "source"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "tool_promote",
+				"description": "Copy a Lua tool made with tool_create in this run or session into the project, to .tyci/tools/<name>.lua of the current worktree. A read-only safety review must answer exactly SAFE first. If it does not, nothing is copied, the call fails with the reason, and you ask the user. The copy is not committed.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string", "description": "Name of the tool, as given to tool_create"},
+					},
+					"required": []string{"name"},
 				},
 			},
 		},
@@ -508,13 +542,14 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "memory",
-				"description": "Project notes that survive the session: every note in .tyci/memory/ is loaded into the next session's system prompt, so writing one is how something you worked out stops having to be worked out again. Write when you learn something NOT obvious from the code — the command that really runs the tests, a rule the compiler does not enforce, a decision and its reason, a trap you already fell into. Never for what the code plainly says, for one-off task detail, or for this conversation: you pay for every note on every future request. Say WHY, keep it to a few sentences, rewrite under the same name to correct it, delete what stopped being true. actions: list (default), read, write, delete.",
+				"description": "Project notes that survive the session: every note in .tyci/memory/ is loaded into the next session's system prompt, so writing one is how something you worked out stops having to be worked out again. Write when you learn something NOT obvious from the code — the command that really runs the tests, a rule the compiler does not enforce, a decision and its reason, a trap you already fell into. Never for what the code plainly says, for one-off task detail, or for this conversation: you pay for every note on every future request. Say WHY, keep it to a few sentences, rewrite under the same name to correct it, delete what stopped being true. actions: list (default), read, write, delete. scope=\"role\" is different: it is the one private note of your workflow role, kept under ~/.tyci/memory/<repo>/<role>.md and loaded into that role's next session. With scope=\"role\" use action read or write only, leave out name, and write the whole note as content.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"action":  map[string]any{"type": "string", "description": "list (default), read, write or delete"},
-						"name":    map[string]any{"type": "string", "description": "Short slug identifying the note, e.g. \"test-command\". Required for read/write/delete. Writing an existing name replaces it."},
+						"action":  map[string]any{"type": "string", "description": "list (default), read, write or delete. With scope=\"role\": read or write."},
+						"name":    map[string]any{"type": "string", "description": "Short slug identifying the note, e.g. \"test-command\". Required for read/write/delete. Writing an existing name replaces it. Not used with scope=\"role\"."},
 						"content": map[string]any{"type": "string", "description": "The note itself (write only). A few sentences, including why it matters."},
+						"scope":   map[string]any{"type": "string", "enum": []string{"project", "role"}, "description": "project (default): the notes of this project. role: your private note as a workflow role; fails when this agent has no role."},
 					},
 				},
 			},
@@ -898,7 +933,8 @@ func GetSubagentToolsSchema() []map[string]any {
 	filtered := make([]map[string]any, 0, len(schema))
 	for _, s := range schema {
 		if fn, ok := s["function"].(map[string]any); ok {
-			if name, ok := fn["name"].(string); ok && IsSubagentDenied(name) {
+			// tool_create and tool_promote are offered to a subagent only by a tools list that names them.
+			if name, ok := fn["name"].(string); ok && (IsSubagentDenied(name) || isRoleGatedTool(name)) {
 				continue
 			}
 		}
@@ -983,6 +1019,16 @@ func subagentToolsSchemaFor(allowed []string) []map[string]any {
 			continue
 		}
 		filtered = append(filtered, s)
+	}
+	// GetSubagentToolsSchema leaves the role-gated tools out, so a list that
+	// names one gets it back here. See AllowedFor.
+	for _, gated := range roleGatedTools {
+		if !slices.Contains(allowed, gated) {
+			continue
+		}
+		if entry, ok := findSchemaEntryByName(GetToolsSchema(), gated); ok {
+			filtered = append(filtered, entry)
+		}
 	}
 	return filtered
 }
@@ -1134,6 +1180,8 @@ var toolRegistry = map[string]Tool{
 	"workflow_resume": &WorkflowResumeTool{},
 	"workflow_stop":   &WorkflowStopTool{},
 	"replace_agent":   &ReplaceAgentTool{},
+	"tool_create":     &ToolCreateTool{},
+	"tool_promote":    &ToolPromoteTool{},
 }
 
 // lookupTool returns the tool registered under name, copying the interface

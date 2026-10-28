@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,14 +9,27 @@ import (
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/runlog"
 	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
+
+// childWorkdir returns the directory that the transcript header of a child
+// names: the working directory of its run (tools.Workdir), or the process
+// directory when the run has none.
+func childWorkdir(ctx context.Context) string {
+	if dir := tools.Workdir(ctx); dir != "" {
+		return dir
+	}
+	cwd, _ := os.Getwd()
+	return cwd
+}
 
 // openChildSession opens the JSONL file of one subagent child and writes msgs
 // to it. Child files live in the "agents" subdirectory of the project's session
 // directory, so "tyci session list" (which reads the directory flat) does not
-// show them. It returns nil when the file cannot be opened: a child must never
-// fail because its transcript could not be written.
-func openChildSession(msgs []connector.Message, model, provider, jobID string) *session.Session {
+// show them. The header names workdir as the cwd of the child. It returns nil
+// when the file cannot be opened: a child must never fail because its
+// transcript could not be written.
+func openChildSession(msgs []connector.Message, model, provider, jobID, workdir string) *session.Session {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil
@@ -25,7 +39,7 @@ func openChildSession(msgs []connector.Message, model, provider, jobID string) *
 		return nil
 	}
 	p = childPath(p, jobID)
-	s, err := session.Open(p, cwd, model, provider)
+	s, err := session.Open(p, workdir, model, provider)
 	if err != nil {
 		return nil
 	}

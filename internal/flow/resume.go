@@ -130,26 +130,48 @@ func (m *Manager) resumeRun(info RepoInfo, st *RunState) (bool, error) {
 	}
 	st = cur
 	if st.Resumed >= maxResumes {
-		m.pauseStale(dir, wf, st, fmt.Sprintf("resumed %d times, please check", maxResumes), true)
+		m.pauseRun(dir, wf, st, fmt.Sprintf("resumed %d times, please check", maxResumes), true)
 		return false, nil
 	}
 	if err := claim(dir, st, os.Getpid()); err != nil {
 		return false, err
 	}
 	if _, err := os.Stat(st.Worktree); err != nil {
-		m.pauseStale(dir, wf, st, "worktree "+st.Worktree+" is missing", true)
+		m.pauseRun(dir, wf, st, "worktree "+st.Worktree+" is missing", true)
 		return false, nil
 	}
 	m.launch(info, wf, st, false, func(ctx context.Context, r *Runner) error { return r.Continue(ctx, st) })
 	return true, nil
 }
 
-// pauseStale pauses a run that cannot be resumed in the "ask" state of its
+// pauseStale pauses the run in dir when its owner is still gone. It takes the run
+// lock and reads the state again, so a run that another tyci process claimed after
+// the scan is left as it is. It does not take m.mu. resumeRun calls pauseRun
+// instead, because it already holds the run lock.
+func (m *Manager) pauseStale(dir string, wf *Workflow, msg string, notify bool) error {
+	unlock, err := lockRun(dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	cur, err := Load(dir)
+	if err != nil {
+		return err
+	}
+	if !ownerGone(cur) {
+		return nil
+	}
+	m.pauseRun(dir, wf, cur, msg, notify)
+	return nil
+}
+
+// pauseRun pauses a run that cannot be resumed in the "ask" state of its
 // workflow; without an ask state the run fails. Reason names the saved state,
-// so the user can answer "goto <state>".
+// so the user can answer "goto <state>". The caller holds the run lock and has
+// checked that the owner is gone.
 // With notify false it sends no notice for a paused run; a failed run always
 // gets its notice.
-func (m *Manager) pauseStale(dir string, wf *Workflow, st *RunState, msg string, notify bool) {
+func (m *Manager) pauseRun(dir string, wf *Workflow, st *RunState, msg string, notify bool) {
 	r := &Runner{WF: wf, Store: &Store{Dir: dir}}
 	if s, ok := wf.States["ask"]; ok && s.Ask != "" {
 		reason := "resume:" + st.Current
@@ -185,7 +207,9 @@ func (m *Manager) AskUnfinished() {
 			notes = append(notes, "cannot pause run "+ShowRunID(st.Run)+": "+err.Error())
 			continue
 		}
-		m.pauseStale(RunDir(info.Home, info.Name(), st.Run), wf, st, "tyci restarted", false)
+		if err := m.pauseStale(RunDir(info.Home, info.Name(), st.Run), wf, "tyci restarted", false); err != nil {
+			notes = append(notes, "cannot pause run "+ShowRunID(st.Run)+": "+err.Error())
+		}
 	}
 	paused, _ := ScanAsk(runs, info.Repo)
 	if len(paused) > 0 {
@@ -363,6 +387,15 @@ func (m *Manager) Adopt(issue int) (id string, paused, ok bool) {
 		}
 	}
 	return "", false, false
+}
+
+// ReleaseAdopted forgets the runs that the orchestrator adopted. The orchestrator
+// calls it when it stops. A paused run is offered again by Adoptable. Afterwards
+// only the active runs and the paused runs of a new adoption count as worker slots.
+func (m *Manager) ReleaseAdopted() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.adopted = nil
 }
 
 // resumeStale resumes a run of the issue whose owner process is gone. found is

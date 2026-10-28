@@ -57,6 +57,17 @@ func TestRoleDefaults(t *testing.T) {
 	}
 }
 
+// #798: planner is a builtin role with the default permission and network on.
+func TestRole_PlannerBuiltin(t *testing.T) {
+	r, err := (&Config{}).Role("planner")
+	if err != nil || r.Prompt != prompt(t, "planner") {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	if r.PermissionMode() != PermissionWorktreeWrite || !r.NetworkOn() {
+		t.Fatalf("permission/network = %q/%v", r.PermissionMode(), r.NetworkOn())
+	}
+}
+
 func TestRoleValidateErrors(t *testing.T) {
 	cases := map[string]struct{ role, want string }{
 		"unknown model":      {`{"model":"zz","prompt":"P"}`, `unknown model alias "zz"`},

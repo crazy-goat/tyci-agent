@@ -45,6 +45,8 @@ type fakeRunner struct {
 	paused      []int         // issues of paused runs (Adopter); their handles ask at once
 	closes      chan []string // params of each CloseWorkflow start
 	closeH      *fakeHandle   // the handle of the last CloseWorkflow start
+	released    int           // calls of ReleaseAdopted (Adopter)
+	closeErr    error         // when set, Start for CloseWorkflow fails with it
 }
 
 func newFakeRunner() *fakeRunner {
@@ -53,6 +55,9 @@ func newFakeRunner() *fakeRunner {
 
 func (r *fakeRunner) Start(_ context.Context, workflow string, in map[string]string, params []string) (RunHandle, error) {
 	if len(params) > 0 {
+		if r.closeErr != nil {
+			return nil, r.closeErr
+		}
 		// The test ends the run by sending on the handle's done channel.
 		h := &fakeHandle{id: workflow, done: make(chan RunResult, 1), asks: make(chan struct{}, 1), owner: r}
 		r.mu.Lock()
@@ -111,6 +116,18 @@ func (r *fakeRunner) Adoptable() []int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append(append([]int(nil), r.resumed...), r.paused...)
+}
+
+func (r *fakeRunner) ReleaseAdopted() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.released++
+}
+
+func (r *fakeRunner) releases() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.released
 }
 
 func (r *fakeRunner) AdoptableResumed() []int {

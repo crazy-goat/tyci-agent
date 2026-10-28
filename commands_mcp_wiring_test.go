@@ -61,7 +61,6 @@ func newInitCommonTestCmd(t *testing.T) *cobra.Command {
 	cmd.Flags().String("history-file", "", "")
 	cmd.Flags().String("session", "", "")
 	cmd.Flags().Bool("no-session", true, "")
-	cmd.Flags().Bool("debug", false, "")
 	cmd.Flags().Bool("no-debug", true, "")
 	cmd.Flags().Bool("no-mcp", false, "")
 	return cmd
@@ -162,23 +161,23 @@ func TestInitCommon_ConnectMCPTrue_ConnectsAndAdvertisesServerTools(t *testing.T
 	}
 
 	var schema []map[string]any
-	if err := json.Unmarshal(cfg.Schema, &schema); err != nil {
-		t.Fatalf("unmarshal cfg.Schema: %v", err)
+	if err := json.Unmarshal(cfg.SchemaFunc(), &schema); err != nil {
+		t.Fatalf("unmarshal cfg.SchemaFunc(): %v", err)
 	}
 	if !schemaHasFunctionNamed(schema, "mcp_weather_forecast") {
-		t.Fatalf("expected cfg.Schema (from initCommon) to include mcp_weather_forecast; got %d tools", len(schema))
+		t.Fatalf("expected cfg.SchemaFunc() (from initCommon) to include mcp_weather_forecast; got %d tools", len(schema))
 	}
 
-	// cfg.Schema must be exactly what GetTopLevelToolsSchemaJSON reports
+	// cfg.SchemaFunc() must be exactly what GetTopLevelToolsSchemaJSON reports
 	// right now, not the builtin-only GetToolsSchemaJSON — this is the
 	// specific switch finding (d) calls out.
 	want := tools.GetTopLevelToolsSchemaJSON()
-	if !bytes.Equal(cfg.Schema, want) {
-		t.Fatalf("cfg.Schema does not match tools.GetTopLevelToolsSchemaJSON(): initCommon is not using it")
+	if !bytes.Equal(cfg.SchemaFunc(), want) {
+		t.Fatalf("cfg.SchemaFunc() does not match tools.GetTopLevelToolsSchemaJSON(): initCommon is not using it")
 	}
 	builtinOnly := tools.GetToolsSchemaJSON()
-	if bytes.Equal(cfg.Schema, builtinOnly) {
-		t.Fatalf("cfg.Schema equals the builtin-only GetToolsSchemaJSON() — MCP tools were not included")
+	if bytes.Equal(cfg.SchemaFunc(), builtinOnly) {
+		t.Fatalf("cfg.SchemaFunc() equals the builtin-only GetToolsSchemaJSON() — MCP tools were not included")
 	}
 	if schemaHasFunctionNamed(schema, "ask_parent") {
 		t.Fatalf("expected the top-level agent's schema to exclude ask_parent — the top-level conversation has no job id, so it always fails immediately")
@@ -218,8 +217,8 @@ func TestInitCommon_ConnectMCPFalse_DoesNotConnect(t *testing.T) {
 		t.Fatalf("connectMCP=false must not connect any MCP server")
 	}
 	var schema []map[string]any
-	if err := json.Unmarshal(cfg.Schema, &schema); err != nil {
-		t.Fatalf("unmarshal cfg.Schema: %v", err)
+	if err := json.Unmarshal(cfg.SchemaFunc(), &schema); err != nil {
+		t.Fatalf("unmarshal cfg.SchemaFunc(): %v", err)
 	}
 	if schemaHasFunctionNamed(schema, "mcp_weather_forecast") {
 		t.Fatalf("did not expect mcp_weather_forecast without connecting MCP")
