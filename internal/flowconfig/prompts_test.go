@@ -27,9 +27,22 @@ func requireAll(t *testing.T, role string, phrases ...string) {
 }
 
 func TestPrompts_Embedded(t *testing.T) {
-	for _, r := range []string{"worker", "review", "fixer"} {
+	for _, r := range []string{"worker", "review", "fixer", "planner"} {
 		prompt(t, r)
 	}
+}
+
+// #798: the planner reads first, searches before it creates an issue, creates
+// only after the user confirms, and never sets a milestone or the accepted label.
+func TestPrompts_PlannerRules(t *testing.T) {
+	requireAll(t, "planner",
+		"Never set a milestone.",
+		"Never add the `accepted` label.",
+		"Search for duplicate issues before you create an issue.",
+		`Create an issue only after the user says "create it".`,
+		"Write files only in your own worktree.",
+		"Read the code and the open issues before you give a plan.",
+	)
 }
 
 func TestPrompts_ReviewMentionsVerdictFormat(t *testing.T) {
