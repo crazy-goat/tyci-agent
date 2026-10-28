@@ -24,6 +24,12 @@ esac
 // runMerge commits file on the issue branch (when not empty) and runs merge.sh.
 func runMerge(t *testing.T, e pushEnv, file string, env map[string]string) (key string, stderr, log string, head string) {
 	t.Helper()
+	return runMergeScript(t, e, "merge.sh", file, env)
+}
+
+// runMergeScript is runMerge for any script of the merge step (merge.sh or merge_approved.sh).
+func runMergeScript(t *testing.T, e pushEnv, name, file string, env map[string]string) (key string, stderr, log string, head string) {
+	t.Helper()
 	if file != "" {
 		p := filepath.Join(e.work, file)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -41,7 +47,7 @@ func runMerge(t *testing.T, e pushEnv, file string, env map[string]string) (key 
 	for k, v := range env {
 		base[k] = v
 	}
-	script, _ := filepath.Abs("merge.sh")
+	script, _ := filepath.Abs(name)
 	key, exit, _, stderr := testutil.RunCheckIn(t, e.work, script, base)
 	if exit != 0 {
 		t.Fatalf("exit %d: %s", exit, stderr)
@@ -107,6 +113,41 @@ func TestMerge_ProtectedPath(t *testing.T) {
 			}
 			wantBlock(t, stderr, "protected", f)
 		})
+	}
+}
+
+// Only merge_approved.sh sets TYCI_ALLOW_PROTECTED=1 (#753): with it, merge.sh merges a protected PR.
+func TestMerge_AllowProtectedMergesProtectedPath(t *testing.T) {
+	key, stderr, log, head := runMerge(t, newPushEnv(t), ".github/workflows/x.yml", map[string]string{"TYCI_ALLOW_PROTECTED": "1"})
+	if key != "merged" || !strings.Contains(log, "pr merge 171 -R o/r --squash --delete-branch --match-head-commit "+head) {
+		t.Fatalf("key=%q log=%s", key, log)
+	}
+	if !strings.Contains(stderr, "approved by a human") {
+		t.Fatalf("stderr lacks the approval note: %s", stderr)
+	}
+}
+
+// merge_approved.sh is the approved path of ask_protected: it merges a protected PR with the
+// same rules as merge.sh.
+func TestMergeApproved_MergesProtectedPath(t *testing.T) {
+	key, _, log, head := runMergeScript(t, newPushEnv(t), "merge_approved.sh", ".tyci/workflows/a.json", nil)
+	if key != "merged" || !strings.Contains(log, "pr merge 171 -R o/r --squash --delete-branch --match-head-commit "+head) {
+		t.Fatalf("key=%q log=%s", key, log)
+	}
+}
+
+func TestMergeApproved_KeepsCIRule(t *testing.T) {
+	key, stderr, log, _ := runMergeScript(t, newPushEnv(t), "merge_approved.sh", ".github/workflows/x.yml", map[string]string{"CI_BUCKET": "pending"})
+	if key != "fail" || strings.Contains(log, "pr merge") {
+		t.Fatalf("key=%q log=%s", key, log)
+	}
+	wantBlock(t, stderr, "fail", "ci-ok of PR #171 is 'pending'")
+}
+
+func TestMergeApproved_KeepsHeadRule(t *testing.T) {
+	key, _, log, _ := runMergeScript(t, newPushEnv(t), "merge_approved.sh", "a.txt", map[string]string{"REMOTE_HEAD": "deadbeef"})
+	if key != "fail" || strings.Contains(log, "pr merge") {
+		t.Fatalf("key=%q log=%s", key, log)
 	}
 }
 
