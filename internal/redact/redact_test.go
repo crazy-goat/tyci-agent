@@ -12,6 +12,7 @@ func TestRedact_Table(t *testing.T) {
 	rows := []struct{ name, in, want string }{
 		{"ghp", "token " + ghp + " end", "token [REDACTED] end"},
 		{"fine grained", pat, "[REDACTED]"},
+		{"gitlab", "token glpat-abcdefghij_KLMNOPQ-1234 end", "token [REDACTED] end"},
 		{"sk", "key sk-abcdefghijklmnopqrstuvwxyz", "key [REDACTED]"},
 		{"aws", "id AKIAABCDEFGHIJKLMNOP.", "id [REDACTED]."},
 		{"bearer", "Authorization: Bearer abc.def-123", "Authorization: Bearer [REDACTED]"},

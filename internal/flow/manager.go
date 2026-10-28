@@ -48,17 +48,17 @@ type RepoInfo struct {
 	Home          string // user home; runs live under <Home>/.tyci/runs
 	Root          string // directory the run works in: the repository toplevel (a linked worktree has its own)
 	MainRoot      string // main checkout of the project: git and worktree operations
-	Repo          string // owner/name
+	Repo          string // owner/name, or group/project (also with subgroups) on GitLab
 	DefaultBranch string
 	Trusted       bool
+	// GitLabURL is the GitLab server of Repo (repos in ~/.tyci/config.json).
+	// Empty: the repository is on GitHub.
+	GitLabURL string
 }
 
-// Name returns the repository name without the owner.
+// Name returns the repository name without the owner or groups.
 func (i RepoInfo) Name() string {
-	if _, n, ok := strings.Cut(i.Repo, "/"); ok {
-		return n
-	}
-	return i.Repo
+	return i.Repo[strings.LastIndex(i.Repo, "/")+1:]
 }
 
 // StartRequest says which workflow to start and its positional param values.
@@ -453,7 +453,12 @@ func endedByAsk(st *RunState) bool {
 	return n > 0 && st.History[n-1].Kind == "ask"
 }
 
+// prURL is the web link of the PR of the run: a GitLab merge request when
+// the run has a GitLab server, else a GitHub pull request.
 func prURL(st *RunState) string {
+	if st.GitLabURL != "" {
+		return fmt.Sprintf("%s/%s/-/merge_requests/%d", strings.TrimRight(st.GitLabURL, "/"), st.Repo, st.PR)
+	}
 	return fmt.Sprintf("https://github.com/%s/pull/%d", st.Repo, st.PR)
 }
 

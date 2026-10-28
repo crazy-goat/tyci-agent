@@ -134,7 +134,7 @@ func daemonRepo(ctx context.Context, cmd *cobra.Command, info flow.RepoInfo, log
 	if fcfg.Repo == "" || fcfg.Repo == "auto" {
 		fcfg.Repo = info.Repo // the repository of --dir, not of the current directory
 	}
-	f, err := newForge(fcfg)
+	f, err := newForge(fcfg, fc.Repos, info.Repo)
 	if err != nil {
 		return daemon.Repo{}, nil, err
 	}

@@ -12,6 +12,20 @@ import (
 // paramEnvName accepts the names of bound params that become TYCI_PARAM_* variables.
 var paramEnvName = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
+// gitlabEnv is the extra check env of a GitLab repo: TYCI_FORGE=gitlab,
+// TYCI_BIN (this tyci binary: the scripts call `tyci forge`) and
+// TYCI_GITLAB_TOKEN/GITLAB_TOKEN when set in the parent.
+func gitlabEnv() []string {
+	exe, _ := os.Executable()
+	env := []string{"TYCI_FORGE=gitlab", "TYCI_BIN=" + exe}
+	for _, k := range []string{"TYCI_GITLAB_TOKEN", "GITLAB_TOKEN"} {
+		if v, ok := os.LookupEnv(k); ok && v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
+}
+
 // buildCheckEnv builds the minimal environment for check scripts (SDR 5.3).
 // Only PATH, HOME and LANG are inherited from the parent, plus
 // GH_TOKEN/GITHUB_TOKEN when set there. Everything else is constructed:

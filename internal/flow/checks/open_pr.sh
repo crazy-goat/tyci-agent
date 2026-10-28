@@ -21,6 +21,10 @@ set -euo pipefail
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
+# lib_forge.sh selects gh or `tyci forge` (GitLab). A copy of this script without it works only for GitHub.
+forge_lib="$(dirname "${BASH_SOURCE[0]}")/lib_forge.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$forge_lib" ]; then . "$forge_lib"; else is_gitlab() { [ "${TYCI_FORGE:-github}" != gitlab ] && return 1; echo "$(basename "$0"): lib_forge.sh is missing" >&2; exit 1; }; github_only() { is_gitlab || :; }; fi
 
 branch="${TYCI_BRANCH:-}"
 default="${TYCI_DEFAULT_BRANCH:-}"
@@ -45,9 +49,14 @@ pick_pr() {
         | sort_by(.headRefName != $b) | .[0] // empty | "\(.number) \(.headRefName)"'
 }
 fields=number,headRefName,isCrossRepository,closingIssuesReferences
-found=$(gh pr list -R "$TYCI_REPO" --head "$branch" --state open --json "$fields" | pick_pr)
-if [ -z "$found" ]; then
-    found=$(gh pr list -R "$TYCI_REPO" --state open --limit 200 --json "$fields" | pick_pr)
+if is_gitlab; then
+    # GitLab: only the merge request from the run branch. tyci forge gives no closing issues.
+    found=$(forge_op pr-list "$branch" | pick_pr)
+else
+    found=$(gh pr list -R "$TYCI_REPO" --head "$branch" --state open --json "$fields" | pick_pr)
+    if [ -z "$found" ]; then
+        found=$(gh pr list -R "$TYCI_REPO" --state open --limit 200 --json "$fields" | pick_pr)
+    fi
 fi
 if [ -z "$found" ]; then
     echo "open_pr.sh: no open PR for issue #$issue or from $branch; the run codes the issue from origin/$default" >&2

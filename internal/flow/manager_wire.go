@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/forge/gitlab"
 	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"github.com/crazy-goat/tyci-agent/internal/trust"
 	"github.com/crazy-goat/tyci-agent/internal/worktree"
@@ -28,6 +30,36 @@ func ParseRemote(url string) (string, error) {
 		return "", fmt.Errorf("cannot read owner/name from remote %q", url)
 	}
 	return m[1], nil
+}
+
+// gitlabForgeCmd is TaskData.ForgeCmd for a GitLab repo.
+func gitlabForgeCmd(repo string) string {
+	exe, _ := os.Executable()
+	return "'" + strings.ReplaceAll(exe, "'", `'\''`) + "' forge --repo " + repo
+}
+
+// scpRemoteRe is the scp form of a remote: [user@]host:path.
+var scpRemoteRe = regexp.MustCompile(`^(?:[^@/\s]+@)?([^:/\s]+):([^\s]+)$`)
+
+// gitlabRemote returns the project and server of a remote URL that points to
+// a GitLab repo of repos (ssh, scp form or https), or "" and "".
+func gitlabRemote(remote string, repos map[string]flowconfig.Repo) (string, string) {
+	remote = strings.TrimSpace(remote)
+	var host, path string
+	if m := scpRemoteRe.FindStringSubmatch(remote); m != nil && !strings.Contains(remote, "://") {
+		host, path = m[1], m[2]
+	} else if u, err := url.Parse(remote); err == nil && (u.Scheme == "ssh" || u.Scheme == "https") {
+		host, path = u.Hostname(), u.Path
+	}
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+	r, ok := repos[path]
+	if host == "" || !ok || r.Forge != "gitlab" {
+		return "", ""
+	}
+	if u, err := url.Parse(r.URL); err != nil || !strings.EqualFold(u.Hostname(), host) {
+		return "", ""
+	}
+	return path, r.URL
 }
 
 func gitOut(dir string, args ...string) (string, error) {
@@ -66,8 +98,15 @@ func DetectRepoAt(dir string) (RepoInfo, error) {
 		return RepoInfo{}, errors.New("no origin remote")
 	}
 	repo, err := ParseRemote(url)
+	gitlabURL := ""
 	if err != nil {
-		return RepoInfo{}, err
+		cfg, cerr := flowconfig.Load(home, "", false)
+		if cerr != nil {
+			return RepoInfo{}, cerr
+		}
+		if repo, gitlabURL = gitlabRemote(url, cfg.Repos); repo == "" {
+			return RepoInfo{}, err
+		}
 	}
 	ref, err := gitOut(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
 	if err != nil || !strings.HasPrefix(ref, "origin/") {
@@ -78,7 +117,7 @@ func DetectRepoAt(dir string) (RepoInfo, error) {
 	if terr != nil {
 		trusted = false
 	}
-	return RepoInfo{Home: home, Root: root, MainRoot: gitinfo.ProjectDir(root), Repo: repo, DefaultBranch: strings.TrimPrefix(ref, "origin/"), Trusted: trusted}, nil
+	return RepoInfo{Home: home, Root: root, MainRoot: gitinfo.ProjectDir(root), Repo: repo, DefaultBranch: strings.TrimPrefix(ref, "origin/"), Trusted: trusted, GitLabURL: gitlabURL}, nil
 }
 
 // NewManager returns the production Manager. notify receives the notices;
@@ -107,6 +146,8 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 	}
 	m.NewRunner = func(info RepoInfo, wf *Workflow, st *RunState) *Runner {
 		runDir := RunDir(info.Home, info.Name(), st.Run)
+		// prURL links the merge request on GitLab. The runner saves it with the state.
+		st.GitLabURL = info.GitLabURL
 		cfg, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
 		r := &Runner{
 			WF:            wf,
@@ -124,6 +165,17 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 		r.Checks = &ExecChecker{DefaultTimeout: cfg.CheckTimeout(), Resolve: wfResolver(wf)}
 		agents := NewSubagentRunner(cfg, spawn)
 		agents.Render = TaskTemplates{Dir: wf.Source}
+		if info.GitLabURL != "" {
+			// Set first: without it the scripts would call gh for a GitLab repo.
+			r.GitLab = true
+			g, err := gitlab.New(info.Repo, info.GitLabURL)
+			if err != nil {
+				r.Agents = failingAgents{err}
+				return r
+			}
+			agents.IssueContext = gitlabIssueContext(g)
+			agents.Render = TaskTemplates{Dir: wf.Source, ForgeCmd: gitlabForgeCmd(info.Repo)}
+		}
 		r.Agents = agents
 		r.slot = newAgentSlot(st.Run, func(role string) error {
 			_, err := cfg.Role(role)

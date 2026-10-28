@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/crazy-goat/tyci-agent/internal/forge/gitlab"
 )
 
 // A workflow proposal (#372) is proposal.md and proposal.patch in the artifact
@@ -193,6 +195,11 @@ func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string)
 	if _, err := git(wt, "push", "origin", "refs/heads/"+branch+":refs/heads/"+branch); err != nil {
 		return "", err
 	}
+	if info.GitLabURL != "" {
+		return createGitLabProposal(ctx, info, branch, title, filepath.Join(dir, "proposal.md"), func() {
+			_, _ = git(wt, "push", "origin", "--delete", "refs/heads/"+branch)
+		})
+	}
 	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "-R", info.Repo, "--base", info.DefaultBranch,
 		"--head", branch, "--title", title, "--body-file", filepath.Join(dir, "proposal.md"))
 	cmd.Dir = wt
@@ -203,4 +210,23 @@ func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string)
 		return "", fmt.Errorf("gh pr create: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return lastLine(string(out)), nil
+}
+
+// createGitLabProposal opens the merge request of a pushed proposal branch and
+// returns its URL. On an error it calls undo, which deletes the branch.
+func createGitLabProposal(ctx context.Context, info RepoInfo, branch, title, bodyFile string, undo func()) (string, error) {
+	body, err := os.ReadFile(bodyFile)
+	if err != nil {
+		undo()
+		return "", err
+	}
+	g, err := gitlab.New(info.Repo, info.GitLabURL)
+	if err == nil {
+		var url string
+		if url, err = g.CreatePR(ctx, info.DefaultBranch, branch, title, string(body)); err == nil {
+			return url, nil
+		}
+	}
+	undo()
+	return "", err
 }

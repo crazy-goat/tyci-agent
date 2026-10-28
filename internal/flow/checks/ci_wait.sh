@@ -17,10 +17,20 @@ set -euo pipefail
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
+# lib_forge.sh selects gh or `tyci forge` (GitLab). A copy of this script without it works only for GitHub.
+forge_lib="$(dirname "${BASH_SOURCE[0]}")/lib_forge.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$forge_lib" ]; then . "$forge_lib"; else is_gitlab() { [ "${TYCI_FORGE:-github}" != gitlab ] && return 1; echo "$(basename "$0"): lib_forge.sh is missing" >&2; exit 1; }; github_only() { is_gitlab || :; }; fi
 
 # save_failed_log <checks json>: best effort, never fails.
 save_failed_log() {
     [ -n "${TYCI_ARTIFACT_DIR:-}" ] || return 0
+    if is_gitlab; then
+        if ! forge_op ci-log "$pr" >"$TYCI_ARTIFACT_DIR/ci-failed.log" 2>&1; then
+            echo "ci_wait.sh: tyci forge ci-log $pr failed" >&2
+        fi
+        return 0
+    fi
     local link run_id
     link=$(jq -r '[.[] | select(.name == "ci-ok")][0].link // ""' <<<"$1" 2>/dev/null || true)
     run_id=$(sed -n 's#.*/actions/runs/\([0-9][0-9]*\).*#\1#p' <<<"$link")
@@ -39,12 +49,19 @@ if [ -z "$pr" ]; then
     # The PR head branch: open_pr.sh may have continued a PR from another branch (#374).
     pr_branch="${TYCI_BRANCH:-<branch>}"
     if [ -s "${TYCI_RUN_DIR:-}/pr_branch" ]; then pr_branch="$(<"$TYCI_RUN_DIR/pr_branch")"; fi
+    if is_gitlab; then
+        hint="run '${TYCI_BIN:-tyci} forge --repo ${TYCI_REPO:-} pr-list $pr_branch'"
+    else
+        hint="run 'gh pr list --head $pr_branch --state open'"
+    fi
     describe fail "TYCI_PR is not set: the run has no PR number, so there is no CI to wait for" \
         "push.sh did not write \$TYCI_RUN_DIR/pr, or the run state lost the PR" \
-        "run 'gh pr list --head $pr_branch --state open'; if a PR exists, return failed with its number (the oracle sends the run back to update); if none exists, return failed"
+        "$hint; if a PR exists, return failed with its number (the oracle sends the run back to update); if none exists, return failed"
     echo fail
     exit 0
 fi
+forge=GitHub
+if is_gitlab; then forge=GitLab; fi
 poll="${TYCI_CI_POLL_SEC:-20}"
 appear="${TYCI_CI_APPEAR_SEC:-300}"
 
@@ -53,17 +70,26 @@ trap 'rm -f "$errf"' EXIT
 errors=0
 start=$SECONDS
 while :; do
-    view=$(gh pr view "$pr" -R "${TYCI_REPO:-}" --json mergeable,mergeStateStatus --jq '.mergeable + " " + .mergeStateStatus' 2>/dev/null || true)
+    if is_gitlab; then
+        view=$(forge_op pr-view "$pr" 2>/dev/null | jq -r '.mergeable + " " + .mergeStateStatus' 2>/dev/null || true)
+    else
+        view=$(gh pr view "$pr" -R "${TYCI_REPO:-}" --json mergeable,mergeStateStatus --jq '.mergeable + " " + .mergeStateStatus' 2>/dev/null || true)
+    fi
     case "$view" in
     CONFLICTING* | *DIRTY)
-        describe conflict "PR #$pr conflicts with the default branch (GitHub state: $view); CI does not run for it" \
+        describe conflict "PR #$pr conflicts with the default branch ($forge state: $view); CI does not run for it" \
             "the default branch changed the same lines as this PR" \
             "the run goes to rebase: it merges origin/${TYCI_DEFAULT_BRANCH:-<default>} and a coder resolves the conflicts"
         echo conflict
         exit 0
         ;;
     esac
-    out=$(gh pr checks "$pr" -R "${TYCI_REPO:-}" --json name,state,bucket,link 2>"$errf" || true)
+    if is_gitlab; then
+        # The pipeline of the head commit is the check ci-ok; no pipeline yet is [].
+        out=$(forge_op pr-checks "$pr" 2>"$errf" || true)
+    else
+        out=$(gh pr checks "$pr" -R "${TYCI_REPO:-}" --json name,state,bucket,link 2>"$errf" || true)
+    fi
     # gh exits 1 with this text when no check exists yet: that is "missing", not an API error.
     case "$(cat "$errf")" in *"no checks reported"*) out='[]' ;; esac
     if bucket=$(jq -er 'if type == "array" then [.[] | select(.name == "ci-ok")][0].bucket // "missing" else empty end' <<<"$out" 2>/dev/null); then
@@ -91,16 +117,32 @@ while :; do
             exit 0
         fi
         if [ "$bucket" = missing ] && [ $((SECONDS - start)) -ge "$appear" ]; then
-            describe fail "the check ci-ok of PR #$pr did not appear within ${appear}s" \
-                "the workflow did not start: the head commit was not pushed, a workflow needs approval, or GitHub Actions is slow or down" \
-                "run 'gh pr checks $pr' and 'gh run list --branch ${TYCI_BRANCH:-<branch>}'; if a run is queued or was just started again ('gh run rerun'), return ok so the step waits again; else return failed"
+            if is_gitlab; then
+                describe fail "the head pipeline (ci-ok) of merge request !$pr did not appear within ${appear}s" \
+                    "the pipeline did not start: the head commit was not pushed, the project has no CI for merge requests, or GitLab CI is slow or down" \
+                    "look at the pipelines of the merge request in GitLab; if a pipeline is queued or was just started again, return ok so the step waits again; else return failed"
+            else
+                describe fail "the check ci-ok of PR #$pr did not appear within ${appear}s" \
+                    "the workflow did not start: the head commit was not pushed, a workflow needs approval, or GitHub Actions is slow or down" \
+                    "run 'gh pr checks $pr' and 'gh run list --branch ${TYCI_BRANCH:-<branch>}'; if a run is queued or was just started again ('gh run rerun'), return ok so the step waits again; else return failed"
+            fi
             echo fail
             exit 0
         fi
     else
         errors=$((errors + 1))
-        echo "ci_wait.sh: gh failure $errors: $(tail -n 1 "$errf")" >&2
-        if [ "$errors" -ge 3 ]; then
+        if is_gitlab; then
+            echo "ci_wait.sh: tyci forge failure $errors: $(tail -n 1 "$errf")" >&2
+        else
+            echo "ci_wait.sh: gh failure $errors: $(tail -n 1 "$errf")" >&2
+        fi
+        if [ "$errors" -ge 3 ] && is_gitlab; then
+            describe fail "'tyci forge pr-checks $pr' failed 3 times in a row (last error: $(tail -n 1 "$errf"))" \
+                "no network, TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, a rate limit, or a GitLab outage" \
+                "check the token and the GitLab API; when it answers, return ok so the step waits again"
+            echo fail
+            exit 0
+        elif [ "$errors" -ge 3 ]; then
             describe fail "'gh pr checks $pr' failed 3 times in a row (last error: $(tail -n 1 "$errf"))" \
                 "no network, gh is not logged in, a rate limit, or a GitHub outage" \
                 "run 'gh auth status' and 'gh pr checks $pr'; when gh works again, return ok so the step waits again"

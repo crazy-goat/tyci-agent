@@ -16,6 +16,11 @@ set -euo pipefail
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
+# lib_forge.sh selects gh or `tyci forge` (GitLab). A copy of this script without it works only for GitHub.
+forge_lib="$(dirname "${BASH_SOURCE[0]}")/lib_forge.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$forge_lib" ]; then . "$forge_lib"; else is_gitlab() { [ "${TYCI_FORGE:-github}" != gitlab ] && return 1; echo "$(basename "$0"): lib_forge.sh is missing" >&2; exit 1; }; github_only() { is_gitlab || :; }; fi
+github_only fail
 # shellcheck disable=SC1091 # sibling file; shellcheck checks it on its own
 . "$(dirname "${BASH_SOURCE[0]}")/lib_redact.sh"
 

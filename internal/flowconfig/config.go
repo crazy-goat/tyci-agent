@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,6 +32,10 @@ type Config struct {
 	Orchestrator    json.RawMessage   `json:"orchestrator,omitempty"` // read by orchestrator.LoadConfig
 	Daemon          json.RawMessage   `json:"daemon,omitempty"`       // read by tyciconfig.LoadDaemon
 	Logs            Logs              `json:"logs"`                   // run transcripts
+
+	// Repos selects the forge per repository ("owner/name" or "group/project").
+	// Only the global file may set it: the forge token goes to Repos[*].URL.
+	Repos map[string]Repo `json:"repos,omitempty"`
 
 	// Keys owned by the agent config (agent.TyciConfig) in the same file.
 	// They are accepted so the file loads, and ignored here. favorite_models
@@ -72,7 +77,23 @@ type Forge struct {
 	Repo string `json:"repo"` // "owner/name"; "" or "auto" reads the git remote
 }
 
-var forgeRepoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+// Repo is the forge of one repository.
+type Repo struct {
+	Forge string `json:"forge"` // "", "github" or "gitlab"
+	URL   string `json:"url"`   // GitLab server, https://...; required for "gitlab"
+}
+
+// GitLabURL returns the server URL of repo when repos selects GitLab for it,
+// else "".
+func (c *Config) GitLabURL(repo string) string {
+	if r, ok := c.Repos[repo]; ok && r.Forge == "gitlab" {
+		return r.URL
+	}
+	return ""
+}
+
+// forgeRepoRe accepts "owner/name" and nested GitLab groups ("group/sub/project").
+var forgeRepoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$`)
 
 // Role holds the model alias or provider/model name and system prompt of one workflow role.
 type Role struct {
@@ -153,9 +174,13 @@ func Load(home, projectDir string, trusted bool) (*Config, error) {
 		return nil, err
 	}
 	if trusted {
-		proj, err := readFile(gitinfo.ProjectPath(projectDir, "config.json"))
+		path := gitinfo.ProjectPath(projectDir, "config.json")
+		proj, err := readFile(path)
 		if err != nil {
 			return nil, err
+		}
+		if len(proj.Repos) > 0 {
+			return nil, fmt.Errorf("%s: repos: allowed only in ~/.tyci/config.json", path)
 		}
 		for k, v := range proj.Models {
 			merged.Models[k] = v
@@ -324,10 +349,24 @@ func (c *Config) validate() error {
 		return fmt.Errorf("logs.retention_days: %d is negative", *d)
 	}
 	if k := c.Forge.Kind; k != "" && k != "github" {
-		return fmt.Errorf("forge.kind: unknown kind %q (only \"github\" is supported)", k)
+		return fmt.Errorf("forge.kind: unknown kind %q (only \"github\"; use repos to select GitLab)", k)
 	}
 	if r := c.Forge.Repo; r != "" && r != "auto" && !forgeRepoRe.MatchString(r) {
 		return fmt.Errorf("forge.repo: %q is not \"auto\" or \"owner/name\"", r)
+	}
+	for name, r := range c.Repos {
+		if !forgeRepoRe.MatchString(name) {
+			return fmt.Errorf("repos: %q is not \"owner/name\"", name)
+		}
+		switch r.Forge {
+		case "", "github":
+		case "gitlab":
+			if u, err := url.Parse(r.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+				return fmt.Errorf("repos.%s.url: %q is not an https:// URL", name, r.URL)
+			}
+		default:
+			return fmt.Errorf("repos.%s.forge: unknown forge %q (\"github\" or \"gitlab\")", name, r.Forge)
+		}
 	}
 	if c.DefaultModel != "" && !c.hasModel(c.DefaultModel) {
 		return fmt.Errorf("default_model: unknown model alias %q", c.DefaultModel)

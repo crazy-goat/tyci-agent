@@ -89,7 +89,9 @@ type RunState struct {
 	Run      string `json:"run"`
 	Workflow string `json:"workflow"`
 	Repo     string `json:"repo"`
-	Issue    int    `json:"issue"` // 0 when the workflow has no issue param
+	// GitLabURL is the GitLab server of Repo, empty for GitHub. prURL uses it.
+	GitLabURL string `json:"gitlab_url,omitempty"`
+	Issue     int    `json:"issue"` // 0 when the workflow has no issue param
 	// Params are the bound param values of the run, by name (#520).
 	Params map[string]string `json:"params,omitempty"`
 	// Trigger is what started the run, for example the tyci daemon key
@@ -300,6 +302,8 @@ type Runner struct {
 	RunDir string // run directory: TYCI_RUN_DIR and RunContext.RunDir
 	// DefaultBranch is TYCI_DEFAULT_BRANCH and RunContext.DefaultBranch.
 	DefaultBranch string
+	// GitLab adds the GitLab check env (see gitlabEnv).
+	GitLab bool
 	// Warn receives warnings that the Manager does not send itself.
 	Warn   func(string)
 	OnSkip func(*RunState)

@@ -34,7 +34,7 @@ type Issue struct {
 	Title string
 	// Labels are the label names.
 	Labels []string
-	// Author is the login of the issue author.
+	// Author is the user name of the issue author.
 	Author string
 	// Milestone is the milestone title, or "" when there is none.
 	Milestone string
@@ -57,14 +57,16 @@ var (
 
 // Forge reads a code forge for one repository.
 type Forge interface {
-	// Repo returns the repository as "owner/name".
+	// Repo returns the repository path, for example "owner/name" or
+	// "group/sub/project".
 	Repo() string
 	// Milestones returns the open milestones.
 	Milestones(ctx context.Context) ([]Milestone, error)
 	// Issues returns the open issues of a milestone title; "" means issues
 	// without a milestone. An unknown title returns ErrUnknownMilestone.
 	Issues(ctx context.Context, milestone string) ([]Issue, error)
-	// CanWrite reports whether user has write or admin permission.
+	// CanWrite reports whether user can push to the repository (GitHub write
+	// or admin, GitLab Developer or more).
 	CanWrite(ctx context.Context, user string) (bool, error)
 }
 
