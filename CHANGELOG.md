@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-28
+
 ### Added
 - Chat: `/plan [topic]` starts a planner job in its own worktree, with the builtin `planner` role. The job runs beside the other jobs and takes no worker slot. The planner stays open until tyci exits, and can be resumed in its worktree, from the agent view or the chat tool `resume`. At exit a turn that still runs is stopped first, then a clean worktree is removed, and a kept one is shown on the terminal (#799).
 - Flow: `planner` is a builtin role with the permission `worktree-write` and network on. Its prompt tells it to read the code and the open issues, search for duplicates, create an issue only after the user says "create it", never set a milestone or the `accepted` label, and write files only in its own worktree (#798).
