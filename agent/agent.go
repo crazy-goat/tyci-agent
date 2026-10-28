@@ -31,7 +31,6 @@ type Config struct {
 	MaxRetries    int
 	MaxIterations int // max tool-call iterations; -1 or 0 means unlimited
 	MaxToolCalls  int // max tool calls of this Run; 0 means unlimited
-	Debug         bool
 	Tools         ToolRunner
 	Schema        json.RawMessage
 	// SchemaFunc gives the tool list of each request when Schema is nil. The

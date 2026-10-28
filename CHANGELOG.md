@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Deprecated
+- CLI: the `--debug` flag has no effect and is hidden. It is still accepted, and it prints a deprecation notice. The debug log in `~/.tyci/debug/` is always on; use `--no-debug` to turn it off (#786).
+
+### Removed
+- Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
+
 ### Security
 - Roles: a role with the permission `read-only` refuses every MCP tool, also when its `tools` list names it. The refusal applies to a direct call, to `tool()` in `lua` and to the tool schema. The plan steps and the read-only text runs get the same rule (#804).
 
