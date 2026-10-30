@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Workflows: `mode: auto | semi` in `workflow.json` and `workflows.<name>.mode` in config. Auto remains the default. Semi pauses after `review` ACCEPT at the dedicated `human_review` state, with `accept`, `fix` and `decline` routes. Human fixes return directly to human review, preserve the `code` visit limit, and survive a restart through the existing run state. The `issue-to-merge` template includes the gate; existing workflow copies need the new state before enabling semi mode. `workflow validate` checks the effective mode and required routes (#219).
+- Workflows: recovery of a failed human fix preserves its visit budget and human gate; the oracle cannot advance it to publishing before human accept. Shared worker limits observe saved human reviews created or completed through a standalone CLI process (#219).
 
 ## [0.12.0] - 2026-10-29
 

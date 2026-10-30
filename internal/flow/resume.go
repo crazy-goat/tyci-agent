@@ -335,7 +335,7 @@ func (m *Manager) slotsInUse(info RepoInfo, except string) int {
 	n := len(m.active) + m.humanReviewSlots(info, except)
 	paused, _ := ScanAsk(RunsDir(info.Home), info.Repo)
 	for _, st := range paused {
-		if _, running := m.active[st.Run]; st.Run != except && !running && m.adopted[st.Run] && !isHumanReviewPause(st) {
+		if _, running := m.active[st.Run]; st.Run != except && !running && m.adopted[st.Run] && !holdsHumanReviewSlot(st) {
 			n++
 		}
 	}
@@ -348,18 +348,44 @@ func isHumanReviewPause(st *RunState) bool {
 	return st.Status == "paused" && st.Ask != nil && st.Ask.Reason == "human_review"
 }
 
-// humanReviewSlots counts saved human-review pauses without an active goroutine.
+// holdsHumanReviewSlot keeps a human reservation through a standalone fix or
+// acceptance, until the run ends. The existing history distinguishes that
+// lifecycle from ordinary auto runs owned by another process.
+func holdsHumanReviewSlot(st *RunState) bool {
+	if st.Status != "running" && st.Status != "paused" {
+		return false
+	}
+	if isHumanReviewPause(st) || (st.Current == "human_review" && st.Mode == tyciconfig.ModeSemi) {
+		return true
+	}
+	for i := len(st.History) - 1; i >= 0; i-- {
+		if st.History[i].Kind == "human_review" {
+			return true
+		}
+	}
+	return false
+}
+
+// humanReviewSlots counts saved human-review reservations without a local active goroutine.
 // except is the run being resumed, which already owns its reservation. Ordinary
 // ask pauses keep their existing adoption-based accounting. m.mu must be held.
 func (m *Manager) humanReviewSlots(info RepoInfo, except string) int {
+	return countHumanReviewSlots(info, except, func(id string) bool {
+		_, active := m.active[id]
+		return active
+	})
+}
+
+// countHumanReviewSlots reads current state.json reservations using the caller's
+// fixed active-ID view. A pool passes one immutable snapshot and needs no foreign
+// manager lock or Info callback while holding the pool lock.
+func countHumanReviewSlots(info RepoInfo, except string, active func(string) bool) int {
 	waiting, _ := scanRuns(RunsDir(info.Home), info.Repo, func(st *RunState) bool {
-		// Also retain the slot across a crash after the transition save and
-		// before the pause save. Semi mode requires this named state.
-		return isHumanReviewPause(st) || (st.Status == "running" && st.Current == "human_review" && st.Mode == tyciconfig.ModeSemi)
+		return holdsHumanReviewSlot(st)
 	})
 	n := 0
 	for _, st := range waiting {
-		if _, active := m.active[st.Run]; !active && st.Run != except {
+		if !active(st.Run) && st.Run != except {
 			n++
 		}
 	}

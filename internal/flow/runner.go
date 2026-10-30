@@ -358,12 +358,19 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			// #561: the recover oracle may not end the run or merge while the PR is open.
 			blocked := s.Agent == "oracle" && oracleBlocked(r.WF, st, key, next)
 			if blocked {
-				next, ok = route(s, "ask")
+				humanGate, _ := pendingHumanReview(st)
+				if humanGate != "" {
+					next, ok = humanGate, true
+				} else {
+					next, ok = route(s, "ask")
+				}
 				if !ok {
 					return r.failUnknownKey(st, cur, key, art)
 				}
 				scope := ""
-				if st.PR != 0 {
+				if humanGate != "" {
+					scope = " before the outstanding human review is accepted"
+				} else if st.PR != 0 {
 					scope = " while the PR is open"
 				}
 				note = MaskSecrets(strings.TrimSpace("The oracle proposes " + key + scope + ", a human must confirm: " + note))
@@ -430,21 +437,43 @@ func (r *Runner) agentRoute(st *RunState, s State, key string) (string, bool) {
 // available while the worker runs, including after a restart or a failed attempt.
 // Once that worker succeeds, the request no longer changes later routes.
 func humanReviewReturn(st *RunState) string {
+	return humanReviewReturnFor(st, st.Current)
+}
+
+// humanReviewReturnFor also identifies an ask recovery that returns to the
+// outstanding human fix before that target becomes Current.
+func humanReviewReturnFor(st *RunState, state string) string {
 	for i := len(st.History) - 1; i >= 0; i-- {
 		h := st.History[i]
 		if h.Kind == "human_review" {
-			if h.To == st.Current && (h.Key == "fix" || h.Key == "decline") {
+			if h.To == state && (h.Key == "fix" || h.Key == "decline") {
 				return h.State
 			}
 			// A later decision, including accept after an exhausted fix,
 			// cancels an older pending request.
 			return ""
 		}
-		if h.Kind == "agent" && h.State == st.Current && h.Key == "done" {
+		if h.Kind == "agent" && h.State == state && h.Key == "done" {
 			return ""
 		}
 	}
 	return ""
+}
+
+// pendingHumanReview names the gate and requested fix state until that worker
+// succeeds or a later human decision replaces the request. Recovery can retry
+// that state or return to the gate; it cannot accept on the human's behalf.
+func pendingHumanReview(st *RunState) (gate, fix string) {
+	for i := len(st.History) - 1; i >= 0; i-- {
+		h := st.History[i]
+		if h.Kind == "human_review" {
+			if gate := humanReviewReturnFor(st, h.To); gate != "" {
+				return gate, h.To
+			}
+			break
+		}
+	}
+	return "", ""
 }
 
 // lastCheck returns the last check step of the run (zero Step when none).
@@ -803,15 +832,18 @@ func (r *Runner) recordApproval(st *RunState, answer string) error {
 
 // moveOn appends step to the history of st, which leaves its ask state for next,
 // and runs the run from next. A restart continues at next without a new visit
-// (see Continue). Otherwise the visit counts reset, unless next is an end state.
+// (see Continue). Human decisions and pending human-fix recovery keep counters;
+// other ask answers reset them unless next is an end state.
 func (r *Runner) moveOn(ctx context.Context, st *RunState, step Step, next string, restart bool) error {
+	gate, fix := pendingHumanReview(st)
+	humanFix := gate != "" && (next == gate || next == fix)
 	st.History = append(st.History, step)
 	st.Ask = nil
 	st.UpdatedAt = time.Now()
-	if !r.WF.States[next].End && !restart && step.Kind != "human_review" {
+	if !r.WF.States[next].End && !restart && step.Kind != "human_review" && !humanFix {
 		st.Visits = map[string]int{}
 	}
-	if step.Kind == "human_review" {
+	if !restart && (step.Kind == "human_review" || humanFix) {
 		st.EntryPending = true
 	}
 	st.Current = next

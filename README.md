@@ -184,9 +184,16 @@ visit, bounded by its `max_visits` (3 in the template). The pause, decision,
 worker note and fix return route use the existing `state.json` and history and
 survive a restart. A run waiting in human review keeps a worker slot, including
 after a restart and when the worker limit is shared across repositories.
+The shared limit reads current saved human reviews at admission, including
+reviews started or completed through a standalone CLI process. That process
+keeps the reservation while fixing or continuing an accepted review and at a
+renewed human-review pause. The reservation is released when the run ends.
 When a human fix reaches the visit limit, the run stays at human review with a
 limit message. No worker or oracle runs another fix; accept follows the mapped
 route, and decline follows its mapped route subject to the same visit limit.
+Recovery retries of a failed human fix keep that same code budget. The oracle
+may retry the requested code state or return to human review; it cannot advance
+the pending request to publishing or CI before a human accepts it.
 
 A semi workflow must have a state named `human_review` with the dedicated
 `"human_review": true` kind and explicit `accept`, `fix` and `decline` routes:

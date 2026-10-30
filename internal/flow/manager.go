@@ -104,17 +104,24 @@ type Manager struct {
 	workers int
 	// pool shares the worker limit with the Managers of other repos (#218).
 	pool *Pool
-	// count includes active runs and saved human-review pauses, so a Pool
-	// reads the occupied slots without m.mu.
-	count atomic.Pointer[slotUsage]
+	// count publishes the active IDs and repository together. A Pool adds
+	// current saved human-review pauses without taking another manager's mu.
+	count atomic.Pointer[activeSlots]
 }
 
-// slotUsage is one atomic snapshot for the pool. human is true while a semi
-// run is active or a human-review pause holds a reservation. Keeping these
-// together prevents a resume from seeing a new total with an old human flag.
+// slotUsage is the current total for an admission, including human reservations.
 type slotUsage struct {
 	total int
 	human bool
+}
+
+// activeSlots is immutable after publication. The copied IDs let a pool read
+// saved human reservations afresh and exclude active runs from the same snapshot.
+// info is the last repository known to this manager, retained across errors.
+type activeSlots struct {
+	ids   map[string]bool
+	human bool
+	info  *RepoInfo
 }
 
 // activeRun is a run with a goroutine in this process.
@@ -231,8 +238,8 @@ type Pool struct {
 func (p *Pool) Join(m *Manager) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Recover human-review reservations from disk before another member can
-	// start a run. The lock order matches reserve: Manager, then Pool.
+	// Publish the repository and active IDs before another member can inspect
+	// its saved human reservations. The lock order is Manager, then Pool.
 	m.countActive()
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -255,29 +262,40 @@ func (p *Pool) othersLocked(m *Manager) (int, bool) {
 	return n, human
 }
 
-// countActive updates the occupied slots after an active entry changes. Human
-// review keeps its slot while paused, even without an orchestrator adoption.
-// m.mu must be held.
+// countActive publishes a consistent active-ID and repository snapshot after
+// an active entry changes. Saved reservations are read afresh by usedSlots,
+// since a standalone CLI can create or finish one. m.mu must be held.
 func (m *Manager) countActive() {
-	usage := slotUsage{total: len(m.active)}
-	for _, a := range m.active {
+	usage := activeSlots{ids: make(map[string]bool, len(m.active))}
+	if previous := m.count.Load(); previous != nil {
+		usage.info = previous.info
+	}
+	for id, a := range m.active {
+		usage.ids[id] = true
 		usage.human = usage.human || a.semi
 	}
 	if m.Info != nil {
 		if info, err := m.Info(); err == nil {
-			paused := m.humanReviewSlots(info, "")
-			usage.total += paused
-			usage.human = usage.human || paused > 0
+			usage.info = &info
 		}
 	}
 	m.count.Store(&usage)
 }
 
 func (m *Manager) usedSlots() slotUsage {
-	if usage := m.count.Load(); usage != nil {
-		return *usage
+	snapshot := m.count.Load()
+	if snapshot == nil {
+		return slotUsage{}
 	}
-	return slotUsage{}
+	usage := slotUsage{total: len(snapshot.ids), human: snapshot.human}
+	if snapshot.info != nil {
+		// Do not skip this scan when an earlier total was zero: another
+		// process may have created a human wait since the last admission.
+		paused := countHumanReviewSlots(*snapshot.info, "", func(id string) bool { return snapshot.ids[id] })
+		usage.total += paused
+		usage.human = usage.human || paused > 0
+	}
+	return usage
 }
 
 // reserve returns the worker limit (0 = unlimited), occupied slots of the other
@@ -451,7 +469,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 	if mode == "" {
 		mode = wf.Mode
 	}
-	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue, done: done, st: st, semi: mode == tyciconfig.ModeSemi}
+	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue, done: done, st: st, semi: mode == tyciconfig.ModeSemi || holdsHumanReviewSlot(st)}
 	m.countActive()
 	r := m.NewRunner(info, wf, st)
 	if r.Warn == nil {
@@ -660,10 +678,11 @@ func (m *Manager) Resume(runID, answer string) error {
 	// the run being resumed already holds its own slot.
 	startup := saved != "" && answer == "goto "+saved
 	workers, others, otherHuman, unlockPool := m.reserve()
-	inUse := len(m.active) + m.humanReviewSlots(info, st.Run) + others
+	humanHolds := m.humanReviewSlots(info, st.Run)
+	inUse := len(m.active) + humanHolds + others
 	// Ordinary ask resumes keep their auto-mode behavior. With a semi run or
 	// a human-review reservation, they must honor that occupied worker slot.
-	limited := startup || (!s.HumanReview && (m.usedSlots().human || m.humanReviewSlots(info, "") > 0 || otherHuman))
+	limited := startup || (!s.HumanReview && (m.usedSlots().human || humanHolds > 0 || otherHuman))
 	if limited && workers > 0 && inUse >= workers {
 		unlockPool()
 		m.mu.Unlock()

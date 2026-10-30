@@ -79,6 +79,10 @@ func oracleTaskProblem(wf *Workflow, dir string) string {
 func (r *Runner) askOrPause(ctx context.Context, st *RunState, s State, message, reason string) error {
 	r.setAsk(st, message, reason)
 	if !r.oracleMayAnswer(st, s) {
+		if gate, _ := pendingHumanReview(st); gate != "" {
+			st.Current, st.EntryPending = gate, true
+			return r.pause(st, "The change waits for human review after the failed fix.", "human_review")
+		}
 		return r.savePaused(st)
 	}
 	return r.oracleAnswer(ctx, st, s)
@@ -169,6 +173,9 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 	step.Stats = agentStats(&stats)
 	if ctx.Err() != nil {
 		// No answer. The pause stays for a human.
+		if gate, _ := pendingHumanReview(st); gate != "" {
+			return r.escalate(st, step, "The oracle was interrupted; the human fix still needs review.")
+		}
 		return r.savePaused(st)
 	}
 	if runErr != nil {
@@ -204,6 +211,9 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 		return r.escalate(st, step, "The oracle proposes the state "+next+", a human must confirm: "+why)
 	}
 	if oracleBlocked(r.WF, st, key, next) {
+		if gate, _ := pendingHumanReview(st); gate != "" {
+			return r.escalate(st, step, "The oracle proposes the state "+next+" before the outstanding human review is accepted: "+why)
+		}
 		if key == "stop" {
 			return r.escalate(st, step, "The oracle proposes stop, a human must confirm: "+why)
 		}
@@ -218,9 +228,16 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 }
 
 // escalate records the oracle step and leaves the run paused for a human. The
-// reason is added to the pause message.
+// reason is added to the pause message. An outstanding human fix returns to its
+// dedicated gate, keeping that gate's worker reservation.
 func (r *Runner) escalate(st *RunState, step Step, reason string) error {
 	reason = MaskSecrets(reason)
+	if gate, _ := pendingHumanReview(st); gate != "" {
+		step.To, step.Note = gate, reason
+		st.History = append(st.History, step)
+		st.Current, st.EntryPending = gate, true
+		return r.pause(st, "The change waits for human review.", "human_review")
+	}
 	step.To = st.Current
 	step.Note = reason
 	st.History = append(st.History, step)
@@ -313,11 +330,15 @@ func onTarget(s State, key string) (string, bool) {
 
 // oracleBlocked reports whether an oracle answer with the key, which sends the run
 // to the state name, must go to a human. A guarded state always does (see
-// isGuarded). While the PR is open, a stop does too, and so does a state that ends
+// isGuarded). A pending human fix permits only its fix state or human gate.
+// While the PR is open, a stop does too, and so does a state that ends
 // the run or a state of the oracle agent, which can stop the run.
 func oracleBlocked(wf *Workflow, st *RunState, key, name string) bool {
 	if isGuarded(wf, name) {
 		return true
+	}
+	if gate, fix := pendingHumanReview(st); gate != "" {
+		return name != gate && name != fix
 	}
 	if st.PR == 0 || WasMerged(st) {
 		return false
