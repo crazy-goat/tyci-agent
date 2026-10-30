@@ -223,7 +223,7 @@ func Validate(wf *Workflow, cfg *flowconfig.Config, resolveCheck Resolver) (warn
 	for _, name := range sortedStates(wf) {
 		// An auto workflow may keep its optional human gate for a later config
 		// override. Its dormant state is not an unreachable-state mistake.
-		if !reach[name] && !(name == "human_review" && wf.States[name].HumanReview && wf.Mode != tyciconfig.ModeSemi) {
+		if !reach[name] && (name != "human_review" || !wf.States[name].HumanReview || wf.Mode == tyciconfig.ModeSemi) {
 			warnings = append(warnings, fmt.Sprintf("state %q is unreachable from start", name))
 		}
 	}
