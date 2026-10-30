@@ -3,6 +3,8 @@ package flow
 import (
 	"context"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/internal/tyciconfig"
 )
 
 // Workflow is a JSON state machine: states and named transitions.
@@ -14,6 +16,8 @@ type Workflow struct {
 	// Description is one line, shown by the / popup and by workflow_start.
 	Description string `json:"description"`
 	Start       string `json:"start"`
+	// Mode defaults to auto. A config.json workflows.<name>.mode overrides it.
+	Mode tyciconfig.Mode `json:"mode,omitempty"`
 	// Params are the positional parameters of a run, in order (#520).
 	Params   []Param          `json:"params,omitempty"`
 	Defaults Defaults         `json:"defaults"`
@@ -40,7 +44,7 @@ type Defaults struct {
 }
 
 // State is one node of the workflow graph.
-// Exactly one of Check, Agent, Ask, End must be set. Task names the task
+// Exactly one of Check, Agent, Ask, HumanReview, End must be set. Task names the task
 // template for an agent state and does not count as a kind by itself.
 type State struct {
 	Check string `json:"check,omitempty"`
@@ -53,6 +57,8 @@ type State struct {
 	Ask    string `json:"ask,omitempty"`
 	// Human makes an ask state wait for a human: the oracle does not answer it (#531).
 	Human bool `json:"human,omitempty"`
+	// HumanReview always pauses for a human outcome: accept, fix or decline.
+	HumanReview bool `json:"human_review,omitempty"`
 	// Guard means the state needs a human before an oracle may send the run
 	// here (#562). See isGuarded.
 	Guard bool `json:"guard,omitempty"`
@@ -89,6 +95,9 @@ type RunState struct {
 	Run      string `json:"run"`
 	Workflow string `json:"workflow"`
 	Repo     string `json:"repo"`
+	// Mode is resolved when the run starts. Empty on legacy runs, which use
+	// the loaded workflow's mode. A restart preserves a new run's human gate.
+	Mode tyciconfig.Mode `json:"mode,omitempty"`
 	// GitLabURL is the GitLab server of Repo, empty for GitHub. prURL uses it.
 	GitLabURL string `json:"gitlab_url,omitempty"`
 	Issue     int    `json:"issue"` // 0 when the workflow has no issue param
@@ -144,7 +153,7 @@ type Replacement struct {
 type Step struct {
 	Seq        int       `json:"seq"`
 	State      string    `json:"state"`
-	Kind       string    `json:"kind"` // check|agent|ask|resume
+	Kind       string    `json:"kind"` // check|agent|ask|human_review|resume
 	Key        string    `json:"key"`
 	To         string    `json:"to"`
 	StartedAt  time.Time `json:"started_at"`

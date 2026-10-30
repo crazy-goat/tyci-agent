@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/internal/tyciconfig"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -103,8 +104,17 @@ type Manager struct {
 	workers int
 	// pool shares the worker limit with the Managers of other repos (#218).
 	pool *Pool
-	// count mirrors len(active), so a Pool reads it without m.mu.
-	count atomic.Int32
+	// count includes active runs and saved human-review pauses, so a Pool
+	// reads the occupied slots without m.mu.
+	count atomic.Pointer[slotUsage]
+}
+
+// slotUsage is one atomic snapshot for the pool. human is true while a semi
+// run is active or a human-review pause holds a reservation. Keeping these
+// together prevents a resume from seeing a new total with an old human flag.
+type slotUsage struct {
+	total int
+	human bool
 }
 
 // activeRun is a run with a goroutine in this process.
@@ -123,6 +133,9 @@ type activeRun struct {
 	done chan struct{}
 	// st is the run state of the goroutine. It is valid after done is closed.
 	st *RunState
+	// semi keeps resume limit checks active while this run fixes or accepts
+	// a human review, replacing its paused reservation without a gap.
+	semi bool
 }
 
 // DefaultStopReason is the reason of a run stopped without a reason.
@@ -192,7 +205,7 @@ func (m *Manager) SetBase(ctx context.Context) {
 	m.mu.Unlock()
 }
 
-// SetWorkers sets the limit of active runs: a start or a "resume" (the answer
+// SetWorkers sets the limit of active runs and human-review reservations: a start or a "resume" (the answer
 // resume of a start-up pause, or a workflow_start that resumes a stale run) is
 // refused while that many runs are active (production: orchestrator.workers).
 // 0 means unlimited. With a pool, it sets the limit of the pool.
@@ -207,7 +220,7 @@ func (m *Manager) SetWorkers(n int) {
 }
 
 // Pool shares one worker limit between the Managers of several repos in one
-// process (#218): the active runs of all of them count against it.
+// process (#218): active runs and human-review pauses count against it.
 type Pool struct {
 	workers atomic.Int32
 	mu      sync.Mutex
@@ -216,41 +229,70 @@ type Pool struct {
 
 // Join adds m to the pool. The limit of the pool replaces the limit of m.
 func (p *Pool) Join(m *Manager) {
-	p.mu.Lock()
-	p.members = append(p.members, m)
-	p.mu.Unlock()
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Recover human-review reservations from disk before another member can
+	// start a run. The lock order matches reserve: Manager, then Pool.
+	m.countActive()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.members = append(p.members, m)
 	m.pool = p
-	m.mu.Unlock()
 }
 
-// othersLocked returns the active runs of the pool members other than m.
+// othersLocked returns the occupied slots of the pool members other than m.
 // p.mu must be held.
-func (p *Pool) othersLocked(m *Manager) int {
+func (p *Pool) othersLocked(m *Manager) (int, bool) {
 	n := 0
+	human := false
 	for _, o := range p.members {
 		if o != m {
-			n += int(o.count.Load())
+			usage := o.usedSlots()
+			n += usage.total
+			human = human || usage.human
 		}
 	}
-	return n
+	return n, human
 }
 
-// countActive updates m.count after a change of the number of m.active
-// entries. m.mu must be held.
-func (m *Manager) countActive() { m.count.Store(int32(len(m.active))) }
+// countActive updates the occupied slots after an active entry changes. Human
+// review keeps its slot while paused, even without an orchestrator adoption.
+// m.mu must be held.
+func (m *Manager) countActive() {
+	usage := slotUsage{total: len(m.active)}
+	for _, a := range m.active {
+		usage.human = usage.human || a.semi
+	}
+	if m.Info != nil {
+		if info, err := m.Info(); err == nil {
+			paused := m.humanReviewSlots(info, "")
+			usage.total += paused
+			usage.human = usage.human || paused > 0
+		}
+	}
+	m.count.Store(&usage)
+}
 
-// reserve returns the worker limit (0 = unlimited) and the active runs of the
-// other repos that share it. It locks the pool until unlock: the caller checks
+func (m *Manager) usedSlots() slotUsage {
+	if usage := m.count.Load(); usage != nil {
+		return *usage
+	}
+	return slotUsage{}
+}
+
+// reserve returns the worker limit (0 = unlimited), occupied slots of the other
+// repos, and whether those slots include semi runs or human-review reservations.
+// It locks the pool until unlock: the caller checks
 // the limit and inserts its run into m.active before unlock, so the check and
 // the reservation are one step for the whole pool. m.mu must be held (the lock
 // order is m.mu, then pool.mu).
-func (m *Manager) reserve() (workers, others int, unlock func()) {
+func (m *Manager) reserve() (workers, others int, human bool, unlock func()) {
 	if m.pool == nil {
-		return m.workers, 0, func() {}
+		return m.workers, 0, false, func() {}
 	}
 	m.pool.mu.Lock()
-	return int(m.pool.workers.Load()), m.pool.othersLocked(m), m.pool.mu.Unlock
+	others, human = m.pool.othersLocked(m)
+	return int(m.pool.workers.Load()), others, human, m.pool.mu.Unlock
 }
 
 // StartIssue starts workflow for issue. The issue goes to the param named "issue",
@@ -318,12 +360,13 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 			return id, nil, err
 		}
 	}
-	workers, others, unlockPool := m.reserve()
-	if workers > 0 && len(m.active)+others >= workers {
+	workers, others, _, unlockPool := m.reserve()
+	inUse := len(m.active) + m.humanReviewSlots(info, "") + others
+	if workers > 0 && inUse >= workers {
 		unlockPool()
 		m.mu.Unlock()
 		return "", nil, fmt.Errorf("%w: orchestrator.workers is %d and %d run(s) are active, also in other repositories; wait until a run ends (workflow_status), or stop one (workflow_stop), then start again",
-			ErrNoSlot, workers, len(m.active)+others)
+			ErrNoSlot, workers, inUse)
 	}
 	key := fmt.Sprintf("%s%d", preparingPrefix, issue)
 	if issue == 0 {
@@ -333,7 +376,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 	if m.active == nil {
 		m.active = map[string]activeRun{}
 	}
-	m.active[key] = activeRun{cancel: cancel, issue: issue}
+	m.active[key] = activeRun{cancel: cancel, issue: issue, semi: def.Mode == tyciconfig.ModeSemi}
 	m.countActive()
 	unlockPool()
 	m.mu.Unlock()
@@ -404,7 +447,11 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 		m.active = map[string]activeRun{}
 	}
 	done := make(chan struct{})
-	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue, done: done, st: st}
+	mode := st.Mode
+	if mode == "" {
+		mode = wf.Mode
+	}
+	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue, done: done, st: st, semi: mode == tyciconfig.ModeSemi}
 	m.countActive()
 	r := m.NewRunner(info, wf, st)
 	if r.Warn == nil {
@@ -505,7 +552,10 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 			if st.Ask != nil && st.Ask.Proposal != "" {
 				keys = append([]string{"apply", "reject"}, keys...)
 			}
-			text += "; answer with workflow_resume: " + strings.Join(keys, "|") + "|retry <note>|goto <state>"
+			text += "; answer with workflow_resume: " + strings.Join(keys, "|")
+			if !wf.States[st.Current].HumanReview {
+				text += "|retry <note>|goto <state>"
+			}
 		}
 		text += ")"
 	default:
@@ -520,10 +570,10 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 	m.Notify(text)
 }
 
-// endedByAsk reports whether the last history step is an answered ask.
+// endedByAsk reports whether the last history step answered a human pause.
 func endedByAsk(st *RunState) bool {
 	n := len(st.History)
-	return n > 0 && st.History[n-1].Kind == "ask"
+	return n > 0 && (st.History[n-1].Kind == "ask" || st.History[n-1].Kind == "human_review")
 }
 
 // prURL is the web link of the PR of the run: a GitLab merge request when
@@ -580,6 +630,12 @@ func (m *Manager) Resume(runID, answer string) error {
 	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
 	rest = strings.TrimSpace(rest)
 	switch {
+	case s.HumanReview:
+		var err error
+		key, _, _, err = humanReviewAnswer(s, answer)
+		if err != nil {
+			return err
+		}
 	case word == "goto" && rest != "":
 		if err := checkGoto(wf, rest); err != nil {
 			return err
@@ -603,12 +659,16 @@ func (m *Manager) Resume(runID, answer string) error {
 	// runs are not counted here: at start-up the orchestrator holds all of them, and
 	// the run being resumed already holds its own slot.
 	startup := saved != "" && answer == "goto "+saved
-	workers, others, unlockPool := m.reserve()
-	if startup && workers > 0 && len(m.active)+others >= workers {
+	workers, others, otherHuman, unlockPool := m.reserve()
+	inUse := len(m.active) + m.humanReviewSlots(info, st.Run) + others
+	// Ordinary ask resumes keep their auto-mode behavior. With a semi run or
+	// a human-review reservation, they must honor that occupied worker slot.
+	limited := startup || (!s.HumanReview && (m.usedSlots().human || m.humanReviewSlots(info, "") > 0 || otherHuman))
+	if limited && workers > 0 && inUse >= workers {
 		unlockPool()
 		m.mu.Unlock()
 		return fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active (an apply or reject of a workflow proposal counts as an active run); answer resume again when one ends",
-			ErrNoSlot, ShowRunID(st.Run), st.Issue, workers, len(m.active)+others)
+			ErrNoSlot, ShowRunID(st.Run), st.Issue, workers, inUse)
 	}
 	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
 	unlockPool()

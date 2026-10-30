@@ -12,10 +12,11 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/internal/tyciconfig"
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
-// ErrPaused is returned when the run enters an ask state.
+// ErrPaused is returned when the run enters an ask or human_review state.
 var ErrPaused = errors.New("flow: run paused")
 
 // FailedTarget is the on target "the last check step": the fixer returns "ok"
@@ -31,7 +32,7 @@ var recoveryCaps = map[string]struct {
 	key string
 }{"fixer": {2, "failed"}, "oracle": {1, "ask"}}
 
-// Run walks the workflow until it reaches end (status done), ask
+// Run walks the workflow until it reaches end (status done), ask or human_review
 // (status paused, ErrPaused), or a failure (status failed).
 //
 // The caller creates st.Worktree before the first state (SDR 5.3); Run never
@@ -85,6 +86,14 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 	if r.WF == nil {
 		return errors.New("flow: workflow is nil")
 	}
+	mode := st.Mode
+	if mode == "" {
+		mode = r.WF.Mode
+	}
+	st.Mode, err = mode.Resolve()
+	if err != nil {
+		return r.fail(ctx, st, err.Error(), err)
+	}
 	if st.Current == "" {
 		st.Current = r.WF.Start
 	}
@@ -125,6 +134,9 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		if s.Ask != "" {
 			return r.askOrPause(ctx, st, s, s.Ask, "")
 		}
+		if s.HumanReview {
+			return r.pause(st, "The change waits for human review. Answer accept, fix or decline.", "human_review")
+		}
 		// A restart enters the saved state without a new visit. The visit is
 		// counted now when the saved file shows it was not counted: the crash
 		// came after the transition save and before the visit save (EntryPending),
@@ -133,6 +145,13 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		again = false
 		if newVisit {
 			if limit := r.effectiveLimit(s); limit > 0 && st.Visits[cur]+1 > limit {
+				if gate := humanReviewReturn(st); gate != "" && r.WF.States[gate].HumanReview {
+					// A human fix never lets the pause oracle grant itself a new
+					// code budget. Keep the human gate and its worker reservation.
+					st.Current = gate
+					st.EntryPending = true
+					return r.pause(st, fmt.Sprintf("The change waits for human review. max_visits:%s reached (%d); accept or decline the change.", cur, limit), "human_review")
+				}
 				askState, ok := r.WF.States["ask"]
 				if !ok || askState.Ask == "" {
 					return r.fail(ctx, st, `max_visits needs an "ask" state`, errors.New(`max_visits needs an "ask" state`))
@@ -385,6 +404,15 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 
 // agentRoute is route for an agent key, plus "goto:<state>" and FailedTarget.
 func (r *Runner) agentRoute(st *RunState, s State, key string) (string, bool) {
+	if st.Current == "review" && key == "ACCEPT" && st.Mode == tyciconfig.ModeSemi {
+		gate, ok := r.WF.States["human_review"]
+		return "human_review", ok && gate.HumanReview
+	}
+	if key == "done" {
+		if target := humanReviewReturn(st); target != "" {
+			return target, true
+		}
+	}
 	next, ok := route(s, key)
 	if target, isGoto := strings.CutPrefix(key, "goto:"); isGoto {
 		if _, mapped := s.On[key]; !mapped && checkGoto(r.WF, target) == nil {
@@ -396,6 +424,27 @@ func (r *Runner) agentRoute(st *RunState, s State, key string) (string, bool) {
 		ok = next != ""
 	}
 	return next, ok
+}
+
+// humanReviewReturn finds the pending human fix in the saved history. It stays
+// available while the worker runs, including after a restart or a failed attempt.
+// Once that worker succeeds, the request no longer changes later routes.
+func humanReviewReturn(st *RunState) string {
+	for i := len(st.History) - 1; i >= 0; i-- {
+		h := st.History[i]
+		if h.Kind == "human_review" {
+			if h.To == st.Current && (h.Key == "fix" || h.Key == "decline") {
+				return h.State
+			}
+			// A later decision, including accept after an exhausted fix,
+			// cancels an older pending request.
+			return ""
+		}
+		if h.Kind == "agent" && h.State == st.Current && h.Key == "done" {
+			return ""
+		}
+	}
+	return ""
 }
 
 // lastCheck returns the last check step of the run (zero Step when none).
@@ -645,7 +694,8 @@ func checkGoto(wf *Workflow, state string) error {
 	return nil
 }
 
-// Resume answers a paused run. The answer only selects a key of the ask
+// Resume answers a paused run. Human review accepts only its three outcomes and
+// keeps visit counts. Other answers select a key of the ask
 // state's on map (then "*"); it never runs anything. Two forms add to this:
 // "retry <note>" keeps the retry route and stores the note for the next worker
 // prompt, and "goto <state>" continues at that state. An unknown answer keeps
@@ -661,8 +711,11 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		return fmt.Errorf("flow: run is %q, not paused", st.Status)
 	}
 	s, ok := r.WF.States[st.Current]
-	if !ok || s.Ask == "" {
+	if !ok || (s.Ask == "" && !s.HumanReview) {
 		return fmt.Errorf("flow: current state %q is not an ask state", st.Current)
+	}
+	if s.HumanReview {
+		return r.resumeHumanReview(ctx, st, s, answer)
 	}
 	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
 	rest = strings.TrimSpace(rest)
@@ -755,8 +808,11 @@ func (r *Runner) moveOn(ctx context.Context, st *RunState, step Step, next strin
 	st.History = append(st.History, step)
 	st.Ask = nil
 	st.UpdatedAt = time.Now()
-	if !r.WF.States[next].End && !restart {
+	if !r.WF.States[next].End && !restart && step.Kind != "human_review" {
 		st.Visits = map[string]int{}
+	}
+	if step.Kind == "human_review" {
+		st.EntryPending = true
 	}
 	st.Current = next
 	st.Status = "running"

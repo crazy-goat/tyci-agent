@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/internal/tyciconfig"
 )
 
 // maxResumes is how many times a run is resumed after a restart before it
@@ -173,7 +175,11 @@ func (m *Manager) pauseStale(dir string, wf *Workflow, msg string, notify bool) 
 // gets its notice.
 func (m *Manager) pauseRun(dir string, wf *Workflow, st *RunState, msg string, notify bool) {
 	r := &Runner{WF: wf, Store: &Store{Dir: dir}}
-	if s, ok := wf.States["ask"]; ok && s.Ask != "" {
+	if wf.States[st.Current].HumanReview {
+		// A crash can happen between saving the transition into this state
+		// and saving its pause. Restore the human gate itself, with its slot.
+		_ = r.pause(st, msg+". The change waits for human review.", "human_review")
+	} else if s, ok := wf.States["ask"]; ok && s.Ask != "" {
 		reason := "resume:" + st.Current
 		st.Current = "ask"
 		_ = r.pause(st, msg, reason)
@@ -226,6 +232,7 @@ func (m *Manager) AskUnfinished() {
 // written for the chat model: it says what to ask and which tool to call.
 func (m *Manager) startupQuestion(info RepoInfo, paused []*RunState) string {
 	var b strings.Builder
+	hasHumanReview := false
 	fmt.Fprintf(&b, "tyci started. %d workflow run(s) of %s are not finished and are paused. Nothing resumes until the user answers.\n", len(paused), info.Repo)
 	for _, st := range paused {
 		fmt.Fprintf(&b, "- run %s, issue #%d", ShowRunID(st.Run), st.Issue)
@@ -241,15 +248,23 @@ func (m *Manager) startupQuestion(info RepoInfo, paused []*RunState) string {
 			answers = append(answers, "resume")
 		}
 		wf, _ := m.Workflow(info, st.Workflow)
+		if wf != nil && wf.States[st.Current].HumanReview {
+			hasHumanReview = true
+		}
 		answers = append(answers, answerKeys(wf, st.Current)...)
 		if st.Ask != nil && st.Ask.Message != "" {
 			b.WriteString(", reason: " + st.Ask.Message)
 		}
 		b.WriteString("; answers: " + strings.Join(answers, ", ") + "\n")
 	}
-	b.WriteString("Ask the user now, in one message: resume, stop or leave paused, for each run or for all. " +
-		"Then call workflow_resume(run, answer) once for each run the user chose (\"resume\" or \"stop\"). " +
-		"Do not call workflow_resume before the user answers. Without an answer the runs stay paused.")
+	if hasHumanReview {
+		b.WriteString("Ask the user now, in one message, to choose one of the listed answers for each run or leave it paused. " +
+			"Then call workflow_resume(run, answer) once for each chosen answer. ")
+	} else {
+		b.WriteString("Ask the user now, in one message: resume, stop or leave paused, for each run or for all. " +
+			"Then call workflow_resume(run, answer) once for each run the user chose (\"resume\" or \"stop\"). ")
+	}
+	b.WriteString("Do not call workflow_resume before the user answers. Without an answer the runs stay paused.")
 	return b.String()
 }
 
@@ -313,14 +328,38 @@ func (m *Manager) pausedRuns() []*RunState {
 	return out
 }
 
-// slotsInUse returns the worker slots in use: the active runs, and the paused
-// runs that the orchestrator holds (adopted, with no goroutine). except is a run
+// slotsInUse returns active runs, human-review reservations, and paused runs
+// that the orchestrator holds (adopted, with no goroutine). except is a run
 // that is not counted, the run being resumed. m.mu must be held.
 func (m *Manager) slotsInUse(info RepoInfo, except string) int {
-	n := len(m.active)
+	n := len(m.active) + m.humanReviewSlots(info, except)
 	paused, _ := ScanAsk(RunsDir(info.Home), info.Repo)
 	for _, st := range paused {
-		if _, running := m.active[st.Run]; st.Run != except && !running && m.adopted[st.Run] {
+		if _, running := m.active[st.Run]; st.Run != except && !running && m.adopted[st.Run] && !isHumanReviewPause(st) {
+			n++
+		}
+	}
+	return n
+}
+
+// isHumanReviewPause identifies the dedicated kind's persisted pause payload.
+// It also works for a human_review kind with a custom state name.
+func isHumanReviewPause(st *RunState) bool {
+	return st.Status == "paused" && st.Ask != nil && st.Ask.Reason == "human_review"
+}
+
+// humanReviewSlots counts saved human-review pauses without an active goroutine.
+// except is the run being resumed, which already owns its reservation. Ordinary
+// ask pauses keep their existing adoption-based accounting. m.mu must be held.
+func (m *Manager) humanReviewSlots(info RepoInfo, except string) int {
+	waiting, _ := scanRuns(RunsDir(info.Home), info.Repo, func(st *RunState) bool {
+		// Also retain the slot across a crash after the transition save and
+		// before the pause save. Semi mode requires this named state.
+		return isHumanReviewPause(st) || (st.Status == "running" && st.Current == "human_review" && st.Mode == tyciconfig.ModeSemi)
+	})
+	n := 0
+	for _, st := range waiting {
+		if _, active := m.active[st.Run]; !active && st.Run != except {
 			n++
 		}
 	}
@@ -407,7 +446,7 @@ func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool,
 		if st.Issue != issue {
 			continue
 		}
-		workers, others, unlockPool := m.reserve()
+		workers, others, _, unlockPool := m.reserve()
 		if inUse := m.slotsInUse(info, st.Run) + others; workers > 0 && inUse >= workers {
 			unlockPool()
 			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d worker slot(s) are in use (active runs, also in other repositories, paused runs held by the orchestrator, and an apply or reject of a workflow proposal)",

@@ -1,6 +1,7 @@
 {
   "description": "Work on a GitHub issue: code, review, open a PR, wait for CI and merge.",
   "start": "check_done",
+  "mode": "auto",
   "params": [{"name": "issue", "description": "GitHub issue number", "required": true}],
   "defaults": {"max_visits": 0},
   "states": {
@@ -12,6 +13,7 @@
     "ask_plan":   {"ask": "The plan of the risky issue waits for your decision. Answer approve to code the issue, replan to plan it again, or stop to end the run.", "human": true, "on": {"approve": "open_pr", "replan": "plan", "stop": "end"}},
     "code":       {"agent": "worker", "max_visits": 3, "on": {"done": "review", "default": "ask"}},
     "review":     {"agent": "review", "on": {"ACCEPT": "lock", "CHANGES": "code", "default": "ask"}},
+    "human_review": {"human_review": true, "on": {"accept": "lock", "fix": "code", "decline": "code"}},
     "lock":       {"check": "checks/lock.sh", "timeout_sec": 14400, "on": {"ok": "update", "timeout": "ask", "fail": "fixer", "default": "fixer"}},
     "update":     {"check": "checks/rebase.sh", "on": {"ok": "post_review", "conflict": "code", "fail": "fixer", "default": "fixer"}},
     "post_review": {"check": "checks/post_review.sh", "on": {"ok": "ci", "skip": "ci", "fail": "ci", "default": "ci"}},

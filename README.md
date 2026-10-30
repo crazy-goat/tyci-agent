@@ -148,6 +148,61 @@ their agent role. With an open, unmerged PR, `stop`, `goto:merge` and a goto to 
 
 The `issue-to-merge` workflow sends an unknown result of the gate `check_done` (the script `checks/issue_done.sh`) to the state `ask_check`. The run does not go to the fixer. A human answers `retry` to run the gate again, or `stop` to end the run. The oracle never answers this pause. A copied workflow does not get this change. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again.
 
+### Human review mode
+
+A workflow runs in `auto` mode by default. Set `mode` to `semi` in its
+`workflow.json`, or override one workflow in `config.json`:
+
+```json
+{
+  "workflows": {
+    "issue-to-merge": { "mode": "semi" }
+  }
+}
+```
+
+The user config overrides the workflow definition; a trusted project's config
+overrides the user config. An omitted mode inherits the earlier setting. An
+explicit `auto` overrides `semi`. Other values are errors. New runs save their
+resolved mode in `state.json`, so a config change does not change a run's mode
+after a restart.
+
+In `semi`, the `review` state's `ACCEPT` outcome enters `human_review` and pauses
+for a human. The oracle never answers this state. Answer with `workflow_resume`
+in the chat, or `tyci workflow resume <run-id> <answer>`:
+
+- `accept` continues along the workflow's mapped route. In `issue-to-merge`, it
+  continues through `lock` and `update` before CI, as an accepted auto review does.
+- `fix` runs the mapped code state. Optional text, for example `fix add a nil
+  check`, becomes a note to the worker. After the worker answers `done`, the run
+  returns directly to human review without another LLM review.
+- `decline` follows its mapped route. The template sends it to code too; optional
+  text becomes the worker's note, and a successful fix returns to human review.
+
+Human outcomes keep the existing visit counts. Each fix uses another `code`
+visit, bounded by its `max_visits` (3 in the template). The pause, decision,
+worker note and fix return route use the existing `state.json` and history and
+survive a restart. A run waiting in human review keeps a worker slot, including
+after a restart and when the worker limit is shared across repositories.
+When a human fix reaches the visit limit, the run stays at human review with a
+limit message. No worker or oracle runs another fix; accept follows the mapped
+route, and decline follows its mapped route subject to the same visit limit.
+
+A semi workflow must have a state named `human_review` with the dedicated
+`"human_review": true` kind and explicit `accept`, `fix` and `decline` routes:
+
+```json
+"human_review": {
+  "human_review": true,
+  "on": { "accept": "lock", "fix": "code", "decline": "code" }
+}
+```
+
+`tyci workflow validate <name>` checks the effective mode and these routes.
+Existing workflow copies need this state before enabling semi mode. To get the
+updated template, move the old `.tyci/workflows/issue-to-merge` aside and run
+`tyci workflow init issue-to-merge` again.
+
 ### Pauses and the oracle
 
 The `oracle` agent answers a pause at an `ask` state before a human sees it. The oracle answers one of these forms. The key line is the first line that starts with one of them; the other lines give the reason:
@@ -312,7 +367,7 @@ Use the `workflow` commands to run and check a workflow from a terminal or a scr
 - Use `--json` to print one JSON object on stdout. Progress and warnings go to stderr.
 - `run` writes a debug log to `~/.tyci/debug/`. Use `--no-debug` to turn it off.
 
-The `run` command waits until the run ends or pauses at an ask state. A paused run is not an error. The command then prints `waiting at ask state <name>` on stderr. Answer the paused run with `workflow_resume` in the chat.
+The `run` command waits until the run ends or pauses at an ask or human review state. A paused run is not an error. The command then prints `waiting at ask state <name>` on stderr. Answer the paused run with `workflow_resume` in the chat or `tyci workflow resume`.
 
 This example shows the JSON output of a run that paused at an ask state:
 

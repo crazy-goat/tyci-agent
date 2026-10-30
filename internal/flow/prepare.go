@@ -85,6 +85,8 @@ func PrepareRun(ctx context.Context, d PrepareDeps, req PrepareReq) (*RunState, 
 		Visits:    map[string]int{},
 		History:   []Step{},
 	}
+	// Validate has checked the mode and applied the per-workflow override.
+	st.Mode, _ = wf.Mode.Resolve()
 	if err := store.Save(st); err != nil {
 		return nil, nil, warnings, err
 	}

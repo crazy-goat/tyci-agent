@@ -125,7 +125,15 @@ func DetectRepoAt(dir string) (RepoInfo, error) {
 func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec) (string, string, error)) *Manager {
 	lookup := func(info RepoInfo, name string) (*Workflow, error) {
 		wf, _, err := Lookup(name, info.Home, info.Root, info.Trusted)
-		return wf, err
+		if err != nil {
+			return nil, err
+		}
+		cfg, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
+		if err != nil {
+			return nil, err
+		}
+		configureMode(wf, cfg)
+		return wf, nil
 	}
 	m := &Manager{Info: DetectRepo, Workflow: lookup, Notify: notify}
 	m.Prepare = func(ctx context.Context, info RepoInfo, req StartRequest) (*RunState, *Workflow, []string, error) {
