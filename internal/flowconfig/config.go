@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
+	"github.com/crazy-goat/tyci-agent/internal/tyciconfig"
 )
 
 const defaultCheckTimeout = 1800 * time.Second
@@ -32,6 +33,8 @@ type Config struct {
 	Orchestrator    json.RawMessage   `json:"orchestrator,omitempty"` // read by orchestrator.LoadConfig
 	Daemon          json.RawMessage   `json:"daemon,omitempty"`       // read by tyciconfig.LoadDaemon
 	Logs            Logs              `json:"logs"`                   // run transcripts
+
+	Workflows map[string]tyciconfig.Workflow `json:"workflows,omitempty"` // per-workflow overrides
 
 	// Repos selects the forge per repository ("owner/name" or "group/project").
 	// Only the global file may set it: the forge token goes to Repos[*].URL.
@@ -190,6 +193,14 @@ func Load(home, projectDir string, trusted bool) (*Config, error) {
 		}
 		for k, v := range proj.Roles {
 			merged.Roles[k] = tighter(merged.Roles[k], v)
+		}
+		for name, settings := range proj.Workflows {
+			if settings.Mode != "" {
+				if merged.Workflows == nil {
+					merged.Workflows = map[string]tyciconfig.Workflow{}
+				}
+				merged.Workflows[name] = settings
+			}
 		}
 		if proj.DefaultModel != "" {
 			merged.DefaultModel = proj.DefaultModel

@@ -8,13 +8,14 @@ import (
 	"strings"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/tyciconfig"
 )
 
 // validateStructure checks the structural rules of section 5.1 that belong
 // to this issue and returns ALL errors found:
 //   - name, start and states are present and start exists,
 //   - every on target exists,
-//   - exactly one kind (check, agent, ask, end) per state,
+//   - exactly one kind (check, agent, ask, human_review, end) per state,
 //   - at least one end state.
 //
 // max_visits needs a state named ask of kind ask (rule 6).
@@ -27,6 +28,15 @@ func validateStructure(wf *Workflow) []error {
 	}
 	if wf.Name == "" {
 		errs = append(errs, fmt.Errorf("workflow name is empty"))
+	}
+	mode, modeErr := wf.Mode.Resolve()
+	if modeErr != nil {
+		errs = append(errs, modeErr)
+	}
+	if mode == tyciconfig.ModeSemi {
+		if s, ok := wf.States["human_review"]; !ok || !s.HumanReview {
+			errs = append(errs, fmt.Errorf(`semi workflow needs a state named "human_review" of kind human_review`))
+		}
 	}
 	if d := wf.Description; strings.TrimSpace(d) == "" {
 		errs = append(errs, fmt.Errorf("workflow description is empty"))
@@ -58,6 +68,14 @@ func validateStructure(wf *Workflow) []error {
 		if s.Ask != "" {
 			kinds++
 		}
+		if s.HumanReview {
+			kinds++
+			for _, key := range []string{"accept", "fix", "decline"} {
+				if s.On[key] == "" || s.On[key] == FailedTarget {
+					errs = append(errs, fmt.Errorf("state %q: human_review needs an explicit %q outcome mapped to a state", name, key))
+				}
+			}
+		}
 		if s.End {
 			kinds++
 			hasEnd = true
@@ -72,7 +90,7 @@ func validateStructure(wf *Workflow) []error {
 			errs = append(errs, fmt.Errorf("state %q: human is only allowed in an ask state", name))
 		}
 		if kinds != 1 {
-			errs = append(errs, fmt.Errorf("state %q must have exactly one of check, agent, ask, end, got %d", name, kinds))
+			errs = append(errs, fmt.Errorf("state %q must have exactly one of check, agent, ask, human_review, end, got %d", name, kinds))
 		}
 		for _, key := range sortedKeys(s.On) {
 			target := s.On[key]
@@ -171,6 +189,7 @@ func errorMessages(err error) []string {
 // It runs validateStructure first, then the rules that need the config and
 // the file system (SDR 5.1 rules 4, 5, 7, 8).
 func Validate(wf *Workflow, cfg *flowconfig.Config, resolveCheck Resolver) (warnings []string, err error) {
+	configureMode(wf, cfg)
 	errs := validateStructure(wf)
 	if wf == nil {
 		return nil, errors.Join(errs...)
@@ -202,11 +221,23 @@ func Validate(wf *Workflow, cfg *flowconfig.Config, resolveCheck Resolver) (warn
 	}
 	reach := reachable(wf)
 	for _, name := range sortedStates(wf) {
-		if !reach[name] {
+		// An auto workflow may keep its optional human gate for a later config
+		// override. Its dormant state is not an unreachable-state mistake.
+		if !reach[name] && (name != "human_review" || !wf.States[name].HumanReview || wf.Mode == tyciconfig.ModeSemi) {
 			warnings = append(warnings, fmt.Sprintf("state %q is unreachable from start", name))
 		}
 	}
 	return warnings, errors.Join(errs...)
+}
+
+// configureMode applies a per-workflow config override. Leaving the mode empty
+// preserves the definition's setting; Resolve supplies auto at the run boundary.
+func configureMode(wf *Workflow, cfg *flowconfig.Config) {
+	if wf != nil && cfg != nil {
+		if mode := cfg.Workflows[wf.Name].Mode; mode != "" {
+			wf.Mode = mode
+		}
+	}
 }
 
 // reachable walks from start over on targets. When any max_visits is set,
@@ -214,6 +245,9 @@ func Validate(wf *Workflow, cfg *flowconfig.Config, resolveCheck Resolver) (warn
 func reachable(wf *Workflow) map[string]bool {
 	seen := map[string]bool{}
 	stack := []string{wf.Start}
+	if mode, _ := wf.Mode.Resolve(); mode == tyciconfig.ModeSemi {
+		stack = append(stack, "human_review")
+	}
 	if wf.Defaults.MaxVisits != 0 || anyMaxVisits(wf) {
 		stack = append(stack, "ask")
 	}
